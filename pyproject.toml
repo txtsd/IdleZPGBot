@@ -1,0 +1,19 @@
+[project]
+name = "idlezpgbot"
+version = "0.0.1"
+description = "The #IdleZPG Bot"
+readme = "README.md"
+license = { file = "LICENSE" }
+maintainers = [{ name = "txtsd", email = "code@ihavea.quest" }]
+keywords = ["irc", "bot", "idlerpg", "zpg"]
+requires-python = ">=3.12"
+dependencies = ["asyncio>=3.4.3", "toml>=0.10.2"]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"

@@ -233,6 +233,17 @@ class IdleZPGBot:
         args (str): Arguments passed with the register command.
     """
     try:
+      if self.db is None:
+        raise RuntimeError('Database connection is not initialized')
+
+      # Check if the user has already registered
+      async with self.db.execute(
+        'SELECT character_name FROM characters WHERE owner_nick = ?', (sender_nick,)
+      ) as cursor:
+        row = await cursor.fetchone()
+        if row:
+          raise ValueError('You have already registered a character.')
+
       parts = args.split()
       if len(parts) < 3:
         raise ValueError('Invalid number of arguments for registration.')
@@ -252,9 +263,6 @@ class IdleZPGBot:
 
       # Hash the password
       password_hash = self.ph.hash(password)
-
-      if self.db is None:
-        raise RuntimeError('Database connection is not initialized')
 
       # Check if the character name is already taken
       async with self.db.execute(
@@ -290,7 +298,7 @@ class IdleZPGBot:
       print(f'User {sender_nick} registered character {character_name}, the {class_name}')
     except ValueError as e:
       # Send error message to the user
-      error_message = 'Registration failed. Please try again. Character and Class names must be <=16 characters.'
+      error_message = str(e)
       self.send_notice(sender_nick, error_message)
       print(f'Registration failed for user {sender_nick}: {str(e)}')
 

@@ -13,6 +13,7 @@ levels, in an SQLite database.
 - **Experience System**: Awards XP to users periodically, tracks levels, and announces level-ups in the channel.
 - **Database Integration**: Stores and manages user data in an SQLite database asynchronously.
 - **Automatic User Management**: Automatically adds new users to the database when they join the channel.
+- **Penalties**: Applies penalties for talking, parting, quitting, and changing nicks.
 
 ## Usage Notes
 
@@ -25,7 +26,7 @@ password, channel to join, and database configuration.
 ### Installing Dependencies
 
 ```shell
-pip install aiosqlite toml
+pip install aiosqlite toml argon2-cffi
 ```
 
 or
@@ -93,22 +94,25 @@ restarts. The database is managed asynchronously using `aiosqlite`, ensuring non
 
 #### Database Schema
 
-Upon initialization, the bot will create a `users` table if it doesn't already exist. The schema is as follows:
+Upon initialization, the bot will create a `characters` table if it doesn't already exist. The schema is as follows:
 
-- **nickname** (`TEXT`, `PRIMARY KEY`): The IRC nickname of the user.
-- **xp** (`INTEGER`, `NOT NULL`, `DEFAULT 0`): The accumulated experience points of the user.
-- **level** (`INTEGER`, `NOT NULL`, `DEFAULT 0`): The current level of the user based on their XP.
-
-If the `level` column is missing (from older versions), the bot will automatically add it to ensure compatibility.
+- **character_name** (`TEXT`, `PRIMARY KEY`): The name of the character.
+- **class_name** (`TEXT`, `NOT NULL`): The class of the character.
+- **password_hash** (`TEXT`, `NOT NULL`): The hashed password for the character.
+- **owner_nick** (`TEXT`, `NOT NULL`): The IRC nickname of the user who owns the character.
+- **xp** (`INTEGER`, `NOT NULL`, `DEFAULT 0`): The accumulated experience points of the character.
+- **level** (`INTEGER`, `NOT NULL`, `DEFAULT 0`): The current level of the character based on their XP.
 
 #### User Management
 
-- **Adding Users**: When a new user joins the channel, the bot checks if they exist in the database. If not, it adds
-them with default XP and level values.
+- **Adding Users**: Users must register a character with the bot to participate. The bot checks if they exist in the
+database and adds them if not.
 - **Awarding XP**: The bot periodically awards XP to all users currently in the channel. It also checks if users have
 leveled up and announces it in the channel.
 - **Level Up Announcements**: When a user reaches a new level, the bot announces the achievement and informs them of
 the time remaining until the next level.
+- **Penalties**: The bot applies penalties for talking, parting, quitting, and changing nicks, which can result in XP
+loss and level-downs.
 
 ## Important Notes
 

@@ -1,9 +1,11 @@
 import asyncio
 import base64
 import ssl
+from typing import Optional
 
 import aiosqlite
 import toml
+from aiosqlite import Connection
 
 
 class IdleZPGBot:
@@ -21,15 +23,15 @@ class IdleZPGBot:
             config (dict): Configuration dictionary loaded from a TOML file.
         """
         self.config = config
-        self.reader = None
-        self.writer = None
+        self.reader: Optional[asyncio.StreamReader] = None
+        self.writer: Optional[asyncio.StreamWriter] = None
         self.channel = self.config['irc']['channel']
         self.users = set()  # Users currently in the channel
         self.xp_interval = 60  # Time interval in seconds to award XP
         self.xp_per_interval = 10  # XP awarded per interval
         self.xp_per_second = self.xp_per_interval / self.xp_interval  # XP awarded per second
         self.xp_task = None  # Background task for awarding XP
-        self.db = None  # Database connection
+        self.db: Optional[Connection] = None  # Database connection
         self.cumulative_xp = self.precompute_cumulative_xp(100)  # Precompute XP thresholds up to level 100
         self.nickname = self.config['irc']['nickname']  # Bot's own nickname
 
@@ -91,6 +93,9 @@ class IdleZPGBot:
 
         while True:
             try:
+                if self.reader is None:
+                    raise RuntimeError('Reader is not initialized')
+
                 # Read data from the server
                 data = await self.reader.read(4096)
                 if not data:
@@ -167,6 +172,9 @@ class IdleZPGBot:
                         self.users.discard(prefix)
                         print(f'{prefix} quit the server.')
 
+                if self.writer is None:
+                    raise RuntimeError('Writer is not initialized')
+
                 await self.writer.drain()
 
             except asyncio.CancelledError:
@@ -183,6 +191,9 @@ class IdleZPGBot:
         """
         if nickname == self.nickname:
             return  # Do not add the bot itself to the database
+
+        if self.db is None:
+            raise RuntimeError('Database connection is not initialized')
 
         async with self.db.execute('SELECT xp, level FROM users WHERE nickname = ?', (nickname,)) as cursor:
             row = await cursor.fetchone()
@@ -280,6 +291,10 @@ class IdleZPGBot:
             await asyncio.sleep(self.xp_interval)
             if not self.users:
                 continue  # No users to award XP to
+
+            if self.db is None:
+                raise RuntimeError('Database connection is not initialized')
+
             async with self.db.execute('BEGIN TRANSACTION;'):
                 for user in self.users:
                     # Fetch current XP and level
@@ -338,6 +353,8 @@ class IdleZPGBot:
             message (str): The raw IRC message to send.
         """
         print(f'SENT: {message}')
+        if self.writer is None:
+            raise RuntimeError('Writer is not initialized')
         # Send the message followed by the IRC message terminator '\r\n'
         self.writer.write(f'{message}\r\n'.encode('utf-8'))
 
@@ -359,6 +376,8 @@ class IdleZPGBot:
         try:
             # Send the QUIT command to the server
             self.send_raw(f'QUIT :{quit_message}')
+            if self.writer is None:
+                raise RuntimeError('Writer is not initialized')
             await self.writer.drain()
         except Exception as e:
             print(f'Error while sending QUIT: {e}')

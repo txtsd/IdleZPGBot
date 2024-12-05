@@ -25,7 +25,7 @@ password, channel to join, and database configuration.
 ### Installing Dependencies
 
 ```shell
-pip install asyncio aiosqlite toml
+pip install aiosqlite toml
 ```
 
 or

@@ -17,8 +17,8 @@ levels, in an SQLite database.
 
 ## Usage Notes
 
-- Ensure you have a `config.toml` file in the same directory with the appropriate configuration settings for the bot
-to function correctly.
+- Ensure you have a `config.toml` file in the same directory with the appropriate configuration settings for the bot to
+function correctly.
 - The bot expects certain fields in the configuration file, such as server details, nickname, username, real name,
 password, channel to join, and database configuration.
 - Install the required dependencies before running the bot.
@@ -49,8 +49,8 @@ uv run idlezpgbot.py
 
 ## Configuration
 
-The bot is configured using a `config.toml` file. Below is an example configuration with detailed explanations for
-each section.
+The bot is configured using a `config.toml` file. Below is an example configuration with detailed explanations for each
+section.
 
 ### Example `config.toml`
 
@@ -84,13 +84,13 @@ path = "idlezpgbot.db"              # Path to the SQLite database file
 
 #### `[database]` Section
 
-- **path**: Specifies the file path for the SQLite database where user data (XP and levels) will be stored. Ensure
-that the bot has read and write permissions for this path.
+- **path**: Specifies the file path for the SQLite database where user data (XP and levels) will be stored. Ensure that
+the bot has read and write permissions for this path.
 
 ### Database Details
 
-IdleZPGBot uses an SQLite database to store user data, allowing it to persist XP and level information across
-restarts. The database is managed asynchronously using `aiosqlite`, ensuring non-blocking operations.
+IdleZPGBot uses an SQLite database to store user data, allowing it to persist XP and level information across restarts.
+The database is managed asynchronously using `aiosqlite`, ensuring non-blocking operations.
 
 #### Database Schema
 
@@ -116,10 +116,10 @@ loss and level-downs.
 
 ## Important Notes
 
-- **Security**: The bot uses SASL PLAIN authentication over an SSL/TLS connection for secure communication. Ensure
-that your `nickserv_password` is kept confidential.
-- **Server Compatibility**: Ensure that the IRC server you are connecting to supports SASL authentication and that
-your credentials are correct.
+- **Security**: The bot uses SASL PLAIN authentication over an SSL/TLS connection for secure communication. Ensure that
+your `nickserv_password` is kept confidential.
+- **Server Compatibility**: Ensure that the IRC server you are connecting to supports SASL authentication and that your
+credentials are correct.
 - **Database Persistence**: The SQLite database ensures that user data persists even if the bot restarts. Regular
 backups are recommended to prevent data loss.
 - **Bot Permissions**: The bot must have the necessary permissions to join the specified channel and send messages.
@@ -131,8 +131,8 @@ Ensure that the bot’s nickname is registered and has the appropriate access ri
 preventing the bot from connecting.
 - **Authentication Failures**: Ensure that the `nickserv_password` is correct and that the IRC server supports SASL
 PLAIN authentication.
-- **Database Errors**: Check that the specified database path is correct and that the bot has the necessary
-permissions to read/write to the file.
+- **Database Errors**: Check that the specified database path is correct and that the bot has the necessary permissions
+to read/write to the file.
 - **Unexpected Behavior**: Review the console logs printed by the bot for any error messages or warnings that can help
 identify the issue.
 

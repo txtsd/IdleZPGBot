@@ -114,6 +114,36 @@ the time remaining until the next level.
 - **Penalties**: The bot applies penalties for talking, parting, quitting, and changing nicks, which can result in XP
 loss and level-downs.
 
+### Commands
+
+#### Register Command
+
+Users must register a character with the bot to participate in the game. The registration command follows this format:
+
+```irc
+/msg <bot> register <character_name> <class_name> <password>
+```
+
+- **character_name**: The name of the character (must be <= 16 letters).
+- **class_name**: The class of the character (must be <= 16 letters).
+- **password**: A password to secure the character.
+
+Example:
+
+```irc
+/msg IdleZPGBot register Gandalf Wizard mysecretpassword
+```
+
+#### Unregister Command
+
+Users can unregister their character from the bot using the following command:
+
+```irc
+/msg <bot> unregister
+```
+
+This will remove the character associated with the user's nickname from the database.
+
 ## Important Notes
 
 - **Security**: The bot uses SASL PLAIN authentication over an SSL/TLS connection for secure communication. Ensure that

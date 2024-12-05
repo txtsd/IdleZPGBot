@@ -322,9 +322,7 @@ class IdleZPGBot:
                 # Announce level-up in the channel
                 time_remaining = self.time_until_next_level(new_level, new_xp)
                 time_formatted = self.format_time(time_remaining)
-                message = (
-                  f'Congratulations {user} on reaching level {new_level}! Time until next level: {time_formatted}'
-                )
+                message = f'{user} has attained level {new_level}! Time until next level: {time_formatted}'
                 self.send_channel_message(message)
           # No XP gain announcements needed
         await self.db.commit()

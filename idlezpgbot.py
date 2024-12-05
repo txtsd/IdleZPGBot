@@ -30,6 +30,7 @@ class IdleZPGBot:
         self.xp_task = None  # Background task for awarding XP
         self.db = None  # Database connection
         self.cumulative_xp = self.precompute_cumulative_xp(100)  # Precompute XP thresholds up to level 100
+        self.nickname = self.config['irc']['nickname']  # Bot's own nickname
 
     async def connect(self):
         """
@@ -141,15 +142,17 @@ class IdleZPGBot:
                         names = line.split(' :', 1)[1].split()
                         for user in names:
                             user = user.lstrip('@+%&~')
-                            self.users.add(user)
-                            await self.ensure_user_in_db(user)
+                            if user != nickname:
+                                self.users.add(user)
+                                await self.ensure_user_in_db(user)
 
                     # Handle JOIN messages
                     elif 'JOIN' in line:
                         prefix = line.split('!', 1)[0][1:]
-                        self.users.add(prefix)
-                        await self.ensure_user_in_db(prefix)
-                        print(f'{prefix} joined the channel.')
+                        if prefix != nickname:
+                            self.users.add(prefix)
+                            await self.ensure_user_in_db(prefix)
+                            print(f'{prefix} joined the channel.')
 
                     # Handle PART messages
                     elif 'PART' in line:
@@ -177,6 +180,9 @@ class IdleZPGBot:
         Args:
             nickname (str): The nickname of the user.
         """
+        if nickname == self.nickname:
+            return  # Do not add the bot itself to the database
+
         async with self.db.execute('SELECT xp, level FROM users WHERE nickname = ?', (nickname,)) as cursor:
             row = await cursor.fetchone()
             if row is None:

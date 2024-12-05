@@ -65,7 +65,7 @@ class IdleZPGBot:
             CREATE TABLE IF NOT EXISTS users (
                 nickname TEXT PRIMARY KEY,
                 xp INTEGER NOT NULL DEFAULT 0,
-                level INTEGER NOT NULL DEFAULT 1
+                level INTEGER NOT NULL DEFAULT 0
             )
         """)
         # Check if 'level' column exists; if not, add it
@@ -73,7 +73,7 @@ class IdleZPGBot:
             columns = await cursor.fetchall()
             column_names = [column[1] for column in columns]
             if 'level' not in column_names:
-                await self.db.execute('ALTER TABLE users ADD COLUMN level INTEGER NOT NULL DEFAULT 1')
+                await self.db.execute('ALTER TABLE users ADD COLUMN level INTEGER NOT NULL DEFAULT 0')
         await self.db.commit()
 
     async def process_messages(self):
@@ -180,13 +180,13 @@ class IdleZPGBot:
         async with self.db.execute('SELECT xp, level FROM users WHERE nickname = ?', (nickname,)) as cursor:
             row = await cursor.fetchone()
             if row is None:
-                # User not in database, insert them at level 1
-                await self.db.execute('INSERT INTO users (nickname, xp, level) VALUES (?, ?, ?)', (nickname, 0, 1))
+                # User not in database, insert them at level 0
+                await self.db.execute('INSERT INTO users (nickname, xp, level) VALUES (?, ?, ?)', (nickname, 0, 0))
                 await self.db.commit()
                 print(f'Added new user to database: {nickname}')
 
                 # Send welcome message with time until next level
-                time_remaining = self.time_until_next_level(1, 0)
+                time_remaining = self.time_until_next_level(0, 0)
                 time_formatted = self.format_time(time_remaining)
                 message = f'Welcome {nickname}! Time until next level: {time_formatted}'
                 self.send_channel_message(message)
@@ -201,23 +201,21 @@ class IdleZPGBot:
         Returns:
             list: List of cumulative XP thresholds indexed by level.
         """
-        cumulative_xp = [0] * (max_level + 2)  # cumulative_xp[level], starting from level 1
-        xp_per_second = self.xp_per_interval / self.xp_interval  # XP awarded per second
+        cumulative_xp = [0] * (max_level + 2)  # Adjusted to start from level 0
+        xp_per_second = self.xp_per_interval / self.xp_interval
 
-        # Level 1 starts at XP 0
-        cumulative_xp[1] = 0
+        # Level 0 starts at XP 0
+        cumulative_xp[0] = 0
 
-        # Precompute for levels 2 to 60
-        for level in range(2, 61):
-            time_to_level = 600 * (1.16 ** (level - 1))
+        # Precompute XP for levels 1 to 60
+        for level in range(1, 61):
+            time_to_level = 600 * (1.16 ** (level - 1))  # Adjusted exponent
             xp_to_level = time_to_level * xp_per_second
             cumulative_xp[level] = cumulative_xp[level - 1] + xp_to_level
 
-        # Time to level at level 60 for levels above 60
+        # Precompute XP for levels above 60
         time_to_level_60 = 600 * (1.16**59)
         xp_to_level_60 = time_to_level_60 * xp_per_second
-
-        # Precompute for levels above 60
         for level in range(61, max_level + 1):
             time_to_level = time_to_level_60 + 86400 * (level - 60)
             xp_to_level = time_to_level * xp_per_second

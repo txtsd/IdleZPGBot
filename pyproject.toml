@@ -1,6 +1,6 @@
 [project]
 name = "idlezpgbot"
-version = "0.0.2"
+version = "0.0.3"
 description = "The #IdleZPG Bot"
 readme = "README.md"
 license = { file = "LICENSE" }

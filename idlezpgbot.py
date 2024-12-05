@@ -223,6 +223,8 @@ class IdleZPGBot:
     # Check if the message is a registration command
     if message_text.startswith('register '):
       await self.handle_register_command(sender_nick, message_text[9:].strip())
+    elif message_text.strip() == 'unregister':
+      await self.handle_unregister_command(sender_nick)
 
   async def handle_register_command(self, sender_nick, args):
     """
@@ -301,6 +303,46 @@ class IdleZPGBot:
       error_message = str(e)
       self.send_notice(sender_nick, error_message)
       print(f'Registration failed for user {sender_nick}: {str(e)}')
+
+  async def handle_unregister_command(self, sender_nick):
+    """
+    Handle the 'unregister' command sent by a user.
+
+    Args:
+        sender_nick (str): Nickname of the sender.
+    """
+    if self.db is None:
+      raise RuntimeError('Database connection is not initialized')
+
+    try:
+      # Check if the user has registered
+      async with self.db.execute(
+        'SELECT character_name FROM characters WHERE owner_nick = ?', (sender_nick,)
+      ) as cursor:
+        row = await cursor.fetchone()
+        if not row:
+          raise ValueError('You have not registered a character.')
+
+      character_name = row[0]
+
+      # Delete the character from the database
+      await self.db.execute('DELETE FROM characters WHERE owner_nick = ?', (sender_nick,))
+      await self.db.commit()
+
+      # Send success message to the user
+      success_message = f'Your character {character_name} has been unregistered.'
+      self.send_notice(sender_nick, success_message)
+
+      # Announce in the channel
+      channel_message = f'{sender_nick} has unregistered their character {character_name}.'
+      self.send_channel_message(channel_message)
+
+      print(f'User {sender_nick} unregistered character {character_name}')
+    except ValueError as e:
+      # Send error message to the user
+      error_message = str(e)
+      self.send_notice(sender_nick, error_message)
+      print(f'Unregister failed for user {sender_nick}: {str(e)}')
 
   def is_valid_name(self, name):
     """

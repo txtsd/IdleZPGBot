@@ -26,8 +26,10 @@ class IdleZPGBot:
         self.users = set()  # Users currently in the channel
         self.xp_interval = 60  # Time interval in seconds to award XP
         self.xp_per_interval = 10  # XP awarded per interval
+        self.xp_per_second = self.xp_per_interval / self.xp_interval  # XP awarded per second
         self.xp_task = None  # Background task for awarding XP
         self.db = None  # Database connection
+        self.cumulative_xp = self.precompute_cumulative_xp(100)  # Precompute XP thresholds up to level 100
 
     async def connect(self):
         """
@@ -62,9 +64,16 @@ class IdleZPGBot:
         await self.db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 nickname TEXT PRIMARY KEY,
-                xp INTEGER NOT NULL DEFAULT 0
+                xp INTEGER NOT NULL DEFAULT 0,
+                level INTEGER NOT NULL DEFAULT 1
             )
         """)
+        # Check if 'level' column exists; if not, add it
+        async with self.db.execute('PRAGMA table_info(users)') as cursor:
+            columns = await cursor.fetchall()
+            column_names = [column[1] for column in columns]
+            if 'level' not in column_names:
+                await self.db.execute('ALTER TABLE users ADD COLUMN level INTEGER NOT NULL DEFAULT 1')
         await self.db.commit()
 
     async def process_messages(self):
@@ -168,13 +177,95 @@ class IdleZPGBot:
         Args:
             nickname (str): The nickname of the user.
         """
-        async with self.db.execute("SELECT xp FROM users WHERE nickname = ?", (nickname,)) as cursor:
+        async with self.db.execute('SELECT xp, level FROM users WHERE nickname = ?', (nickname,)) as cursor:
             row = await cursor.fetchone()
             if row is None:
-                # User not in database, insert them
-                await self.db.execute("INSERT INTO users (nickname, xp) VALUES (?, ?)", (nickname, 0))
+                # User not in database, insert them at level 1
+                await self.db.execute('INSERT INTO users (nickname, xp, level) VALUES (?, ?, ?)', (nickname, 0, 1))
                 await self.db.commit()
                 print(f'Added new user to database: {nickname}')
+
+                # Send welcome message with time until next level
+                time_remaining = self.time_until_next_level(1, 0)
+                time_formatted = self.format_time(time_remaining)
+                message = f'Welcome {nickname}! Time until next level: {time_formatted}'
+                self.send_channel_message(message)
+
+    def precompute_cumulative_xp(self, max_level):
+        """
+        Precompute cumulative XP required to reach each level up to max_level.
+
+        Args:
+            max_level (int): The maximum level to compute XP thresholds for.
+
+        Returns:
+            list: List of cumulative XP thresholds indexed by level.
+        """
+        cumulative_xp = [0] * (max_level + 2)  # cumulative_xp[level], starting from level 1
+        xp_per_second = self.xp_per_interval / self.xp_interval  # XP awarded per second
+
+        # Level 1 starts at XP 0
+        cumulative_xp[1] = 0
+
+        # Precompute for levels 2 to 60
+        for level in range(2, 61):
+            time_to_level = 600 * (1.16 ** (level - 1))
+            xp_to_level = time_to_level * xp_per_second
+            cumulative_xp[level] = cumulative_xp[level - 1] + xp_to_level
+
+        # Time to level at level 60 for levels above 60
+        time_to_level_60 = 600 * (1.16**59)
+        xp_to_level_60 = time_to_level_60 * xp_per_second
+
+        # Precompute for levels above 60
+        for level in range(61, max_level + 1):
+            time_to_level = time_to_level_60 + 86400 * (level - 60)
+            xp_to_level = time_to_level * xp_per_second
+            cumulative_xp[level] = cumulative_xp[level - 1] + xp_to_level
+
+        return cumulative_xp
+
+    def time_until_next_level(self, level, xp):
+        """
+        Calculate the time remaining until the next level for a user.
+
+        Args:
+            level (int): The user's current level.
+            xp (float): The user's current XP.
+
+        Returns:
+            float: Time in seconds until the next level.
+        """
+        next_level = level + 1
+        if next_level >= len(self.cumulative_xp):
+            return float('inf')  # No more levels defined
+        xp_needed = self.cumulative_xp[next_level] - xp
+        time_remaining = xp_needed / self.xp_per_second
+        return time_remaining
+
+    def format_time(self, seconds):
+        """
+        Format time in seconds into a human-readable string.
+
+        Args:
+            seconds (float): Time in seconds.
+
+        Returns:
+            str: Formatted time string.
+        """
+        seconds = int(seconds)
+        days, seconds = divmod(seconds, 86400)
+        hours, seconds = divmod(seconds, 3600)
+        minutes, seconds = divmod(seconds, 60)
+        parts = []
+        if days > 0:
+            parts.append(f'{days}d')
+        if hours > 0 or days > 0:
+            parts.append(f'{hours}h')
+        if minutes > 0 or hours > 0 or days > 0:
+            parts.append(f'{minutes}m')
+        parts.append(f'{seconds}s')
+        return ' '.join(parts)
 
     async def award_experience(self):
         """
@@ -186,12 +277,41 @@ class IdleZPGBot:
                 continue  # No users to award XP to
             async with self.db.execute('BEGIN TRANSACTION;'):
                 for user in self.users:
-                    await self.db.execute(
-                        "UPDATE users SET xp = xp + ? WHERE nickname = ?",
-                        (self.xp_per_interval, user)
-                    )
+                    # Fetch current XP and level
+                    async with self.db.execute('SELECT xp, level FROM users WHERE nickname = ?', (user,)) as cursor:
+                        row = await cursor.fetchone()
+                        if row:
+                            current_xp, current_level = row
+                            new_xp = current_xp + self.xp_per_interval
+                            new_level = current_level
+                            leveled_up = False
+
+                            # Debug: Print current status
+                            print(f'User: {user}, Current XP: {current_xp}, Current Level: {current_level}')
+
+                            # Check for level-ups
+                            while (
+                                new_level + 1 < len(self.cumulative_xp) and new_xp >= self.cumulative_xp[new_level + 1]
+                            ):
+                                new_level += 1
+                                leveled_up = True
+                                print(f'{user} has leveled up to level {new_level}!')
+
+                            # Update user's XP and level
+                            await self.db.execute(
+                                'UPDATE users SET xp = ?, level = ? WHERE nickname = ?', (new_xp, new_level, user)
+                            )
+
+                            if leveled_up:
+                                # Announce level-up in the channel
+                                time_remaining = self.time_until_next_level(new_level, new_xp)
+                                time_formatted = self.format_time(time_remaining)
+                                message = f'Congratulations {user} on reaching level {new_level}! Time until next level: {time_formatted}'
+                                self.send_channel_message(message)
+                    # No XP gain announcements needed
                 await self.db.commit()
-            print(f'Awarded {self.xp_per_interval} XP to users: {", ".join(self.users)}')
+                # Debug: Indicate that XP has been awarded
+                print(f'Awarded {self.xp_per_interval} XP to users.')
 
     async def join_channel(self):
         """
@@ -215,8 +335,15 @@ class IdleZPGBot:
         print(f'SENT: {message}')
         # Send the message followed by the IRC message terminator '\r\n'
         self.writer.write(f'{message}\r\n'.encode('utf-8'))
-        # Ensure the message is sent without blocking the event loop
-        asyncio.create_task(self.writer.drain())
+
+    def send_channel_message(self, message):
+        """
+        Send a message to the channel.
+
+        Args:
+            message (str): The message to send.
+        """
+        self.send_raw(f'PRIVMSG {self.channel} :{message}')
 
     async def disconnect(self):
         """

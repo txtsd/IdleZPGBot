@@ -1,11 +1,12 @@
 import asyncio
 import base64
 import ssl
-from typing import Optional
+from typing import Optional, Set
 
 import aiosqlite
 import toml
 from aiosqlite import Connection
+from argon2 import PasswordHasher
 
 
 class IdleZPGBot:
@@ -13,6 +14,8 @@ class IdleZPGBot:
   An IRCv3 bot that connects to an IRC server using SSL/TLS, authenticates using
   SASL PLAIN mechanism, awards experience points to users idling in the channel,
   and stores users' data in an SQLite database using aiosqlite.
+
+  Users must register a character with the bot to participate.
   """
 
   def __init__(self, config):
@@ -26,14 +29,15 @@ class IdleZPGBot:
     self.reader: Optional[asyncio.StreamReader] = None
     self.writer: Optional[asyncio.StreamWriter] = None
     self.channel = self.config['irc']['channel']
-    self.users = set()  # Users currently in the channel
+    self.users: Set[str] = set()  # Users currently in the channel
     self.xp_interval = 60  # Time interval in seconds to award XP
     self.xp_per_interval = 10  # XP awarded per interval
     self.xp_per_second = self.xp_per_interval / self.xp_interval  # XP awarded per second
-    self.xp_task = None  # Background task for awarding XP
+    self.xp_task: Optional[asyncio.Task] = None  # Background task for awarding XP
     self.db: Optional[Connection] = None  # Database connection
     self.cumulative_xp = self.precompute_cumulative_xp(100)  # Precompute XP thresholds up to level 100
     self.nickname = self.config['irc']['nickname']  # Bot's own nickname
+    self.ph = PasswordHasher()
 
   async def connect(self):
     """
@@ -61,23 +65,20 @@ class IdleZPGBot:
 
   async def initialize_database(self):
     """
-    Initialize the SQLite database and create the users table if it doesn't exist.
+    Initialize the SQLite database and create the characters table if it doesn't exist.
     """
     db_name = self.config['database']['path']
     self.db = await aiosqlite.connect(db_name)
     await self.db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                nickname TEXT PRIMARY KEY,
-                xp INTEGER NOT NULL DEFAULT 0,
-                level INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-    # Check if 'level' column exists; if not, add it
-    async with self.db.execute('PRAGMA table_info(users)') as cursor:
-      columns = await cursor.fetchall()
-      column_names = [column[1] for column in columns]
-      if 'level' not in column_names:
-        await self.db.execute('ALTER TABLE users ADD COLUMN level INTEGER NOT NULL DEFAULT 0')
+      CREATE TABLE IF NOT EXISTS characters (
+          character_name TEXT PRIMARY KEY,
+          class_name TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          owner_nick TEXT NOT NULL,
+          xp INTEGER NOT NULL DEFAULT 0,
+          level INTEGER NOT NULL DEFAULT 0
+      )
+    """)
     await self.db.commit()
 
   async def process_messages(self):
@@ -86,6 +87,8 @@ class IdleZPGBot:
 
     Handles PING/PONG keep-alive messages, manages SASL authentication steps,
     joins the specified channel after successful login, and updates user lists.
+
+    Also handles registration commands and applies penalties.
     """
     # Extract required credentials from configuration
     nickname = self.config['irc']['nickname']
@@ -113,14 +116,19 @@ class IdleZPGBot:
           # Respond to server PING messages to keep the connection alive
           if line.startswith('PING'):
             self.send_raw(f'PONG {line[5:]}')
+            continue
+
+          prefix, command, params = self.parse_irc_line(line)
+          sender_nick = self.extract_nick_from_prefix(prefix)
 
           # Handle server acknowledgment of SASL capability
-          elif 'CAP * ACK :sasl' in line:
-            # Begin SASL authentication process
-            self.send_raw('AUTHENTICATE PLAIN')
+          if command == 'CAP' and 'ACK' in params:
+            if 'sasl' in params:
+              # Begin SASL authentication process
+              self.send_raw('AUTHENTICATE PLAIN')
 
           # Server prompts for authentication credentials
-          elif 'AUTHENTICATE +' in line:
+          elif command == 'AUTHENTICATE' and params[0] == '+':
             # Prepare credentials in the format: \0username\0password
             credentials = f'\0{nickname}\0{password}'.encode('utf-8')
             # Encode credentials in Base64 as required by SASL PLAIN mechanism
@@ -128,49 +136,71 @@ class IdleZPGBot:
             self.send_raw(f'AUTHENTICATE {auth_message}')
 
           # SASL authentication was successful
-          elif '903' in line:
+          elif command == '903':
             print('SASL authentication successful')
             # End capability negotiation
             self.send_raw('CAP END')
 
           # SASL authentication failed
-          elif '904' in line or '905' in line:
+          elif command == '904' or command == '905':
             print('SASL authentication failed')
             return  # Exit the loop and disconnect
 
           # Server has sent the Message of the Day (MOTD), indicating login is complete
-          elif '376' in line or '422' in line:
+          elif command == '376' or command == '422':
             # Proceed to join the specified channel
             await self.join_channel()
 
           # Handle names reply to get the list of users upon joining the channel
-          elif '353' in line:
-            names = line.split(' :', 1)[1].split()
+          elif command == '353':
+            names = params[-1].split()
             for user in names:
               user = user.lstrip('@+%&~')
               if user != nickname:
                 self.users.add(user)
-                await self.ensure_user_in_db(user)
+                print(f'User in channel: {user}')
 
           # Handle JOIN messages
-          elif 'JOIN' in line:
-            prefix = line.split('!', 1)[0][1:]
-            if prefix != nickname:
-              self.users.add(prefix)
-              await self.ensure_user_in_db(prefix)
-              print(f'{prefix} joined the channel.')
+          elif command == 'JOIN':
+            if sender_nick != nickname:
+              self.users.add(sender_nick)
+              print(f'{sender_nick} joined the channel.')
 
           # Handle PART messages
-          elif 'PART' in line:
-            prefix = line.split('!', 1)[0][1:]
-            self.users.discard(prefix)
-            print(f'{prefix} left the channel.')
+          elif command == 'PART':
+            self.users.discard(sender_nick)
+            print(f'{sender_nick} left the channel.')
+            await self.apply_penalty(sender_nick, reason='PART')
 
           # Handle QUIT messages
-          elif 'QUIT' in line:
-            prefix = line.split('!', 1)[0][1:]
-            self.users.discard(prefix)
-            print(f'{prefix} quit the server.')
+          elif command == 'QUIT':
+            self.users.discard(sender_nick)
+            print(f'{sender_nick} quit the server.')
+            await self.apply_penalty(sender_nick, reason='QUIT')
+
+          # Handle NICK changes
+          elif command == 'NICK':
+            new_nick = params[0]
+            if sender_nick in self.users:
+              self.users.discard(sender_nick)
+              self.users.add(new_nick)
+              print(f'{sender_nick} changed nick to {new_nick}')
+              await self.apply_penalty(sender_nick, reason='NICK')
+            if sender_nick == nickname:
+              self.nickname = new_nick
+
+          # Handle PRIVMSG
+          elif command == 'PRIVMSG':
+            target = params[0]
+            message_text = params[1] if len(params) > 1 else ''
+            if target == self.nickname:
+              # Private message to the bot
+              await self.handle_private_message(sender_nick, message_text)
+            elif target == self.channel:
+              # Message in the channel
+              print(f'{sender_nick} in channel: {message_text}')
+              # Apply penalty for talking in the channel
+              await self.apply_penalty(sender_nick, reason='TALK')
 
         if self.writer is None:
           raise RuntimeError('Writer is not initialized')
@@ -182,32 +212,206 @@ class IdleZPGBot:
         print('Task cancelled during message processing.')
         break
 
-  async def ensure_user_in_db(self, nickname):
+  async def handle_private_message(self, sender_nick, message_text):
     """
-    Ensure that a user's record exists in the database.
+    Handle private messages sent to the bot.
 
     Args:
-        nickname (str): The nickname of the user.
+        sender_nick (str): Nickname of the sender.
+        message_text (str): The message content.
     """
-    if nickname == self.nickname:
-      return  # Do not add the bot itself to the database
+    # Check if the message is a registration command
+    if message_text.startswith('register '):
+      await self.handle_register_command(sender_nick, message_text[9:].strip())
 
+  async def handle_register_command(self, sender_nick, args):
+    """
+    Handle the 'register' command sent by a user.
+
+    Args:
+        sender_nick (str): Nickname of the sender.
+        args (str): Arguments passed with the register command.
+    """
+    try:
+      parts = args.split()
+      if len(parts) < 3:
+        raise ValueError('Invalid number of arguments for registration.')
+
+      character_name = parts[0]
+      class_name = ' '.join(parts[1:-1])
+      password = parts[-1]
+
+      # Strip leading 'the' from class name
+      class_name = self.strip_leading_the(class_name)
+
+      # Validate character_name and class_name (<=16 letters)
+      if not self.is_valid_name(character_name):
+        raise ValueError('Character names must be <=16 letters.')
+      if not self.is_valid_name(class_name):
+        raise ValueError('Class names must be <=16 letters.')
+
+      # Hash the password
+      password_hash = self.ph.hash(password)
+
+      if self.db is None:
+        raise RuntimeError('Database connection is not initialized')
+
+      # Check if the character name is already taken
+      async with self.db.execute(
+        'SELECT character_name FROM characters WHERE character_name = ?', (character_name,)
+      ) as cursor:
+        row = await cursor.fetchone()
+        if row:
+          raise ValueError(f'Character name {character_name} is already taken.')
+
+      # Insert the new character into the database
+      await self.db.execute(
+        'INSERT INTO characters (character_name, class_name, password_hash, owner_nick, xp, level) VALUES (?, ?, ?, ?, ?, ?)',
+        (character_name, class_name, password_hash, sender_nick, 0, 0),
+      )
+      await self.db.commit()
+
+      # Send success message to the user
+      success_message = (
+        f'Registration successful! Your character {character_name}, the {class_name} has been created.\n'
+        'The purpose of the game is to idle in the channel and level up your character. '
+        'Talking, parting, quitting, and changing nicks have penalties.'
+      )
+      self.send_notice(sender_nick, success_message)
+
+      # Calculate time until next level
+      time_remaining = self.time_until_next_level(0, 0)
+      time_formatted = self.format_time(time_remaining)
+
+      # Announce in the channel
+      channel_message = f"Welcome {sender_nick}'s new player: {character_name}, the {class_name}! Time until next level: {time_formatted}"
+      self.send_channel_message(channel_message)
+
+      print(f'User {sender_nick} registered character {character_name}, the {class_name}')
+    except ValueError as e:
+      # Send error message to the user
+      error_message = 'Registration failed. Please try again. Character and Class names must be <=16 characters.'
+      self.send_notice(sender_nick, error_message)
+      print(f'Registration failed for user {sender_nick}: {str(e)}')
+
+  def is_valid_name(self, name):
+    """
+    Validate a name to ensure it is <=16 letters (unicode letters allowed).
+
+    Args:
+        name (str): The name to validate.
+
+    Returns:
+        bool: True if valid, False otherwise.
+    """
+    name = name.strip()
+    letter_count = sum(1 for c in name if c.isalpha())
+    return letter_count <= 16 and letter_count > 0
+
+  def strip_leading_the(self, s):
+    """
+    Strip leading 'the' from the class name.
+
+    Args:
+        s (str): The class name.
+
+    Returns:
+        str: Class name without leading 'the'.
+    """
+    s = s.strip()
+    if s.lower().startswith('the '):
+      return s[4:].strip()
+    return s
+
+  async def apply_penalty(self, nick, reason=''):
+    """
+    Apply penalty to the character associated with the given nick.
+
+    Args:
+        nick (str): Nickname of the user.
+        reason (str): Reason for the penalty (e.g., 'TALK', 'PART', 'QUIT', 'NICK').
+    """
+    penalty_xp = self.xp_per_interval  # Define penalty amount (same as xp per interval)
     if self.db is None:
       raise RuntimeError('Database connection is not initialized')
-
-    async with self.db.execute('SELECT xp, level FROM users WHERE nickname = ?', (nickname,)) as cursor:
+      return
+    # Fetch the character associated with the nick
+    async with self.db.execute(
+      'SELECT character_name, xp, level FROM characters WHERE owner_nick = ?', (nick,)
+    ) as cursor:
       row = await cursor.fetchone()
-      if row is None:
-        # User not in database, insert them at level 0
-        await self.db.execute('INSERT INTO users (nickname, xp, level) VALUES (?, ?, ?)', (nickname, 0, 0))
-        await self.db.commit()
-        print(f'Added new user to database: {nickname}')
+      if row:
+        character_name, current_xp, current_level = row
+        new_xp = max(current_xp - penalty_xp, 0)
+        new_level = current_level
+        leveled_down = False
 
-        # Send welcome message with time until next level
-        time_remaining = self.time_until_next_level(0, 0)
-        time_formatted = self.format_time(time_remaining)
-        message = f'Welcome {nickname}! Time until next level: {time_formatted}'
-        self.send_channel_message(message)
+        # Check for level-downs
+        while new_level > 0 and new_xp < self.cumulative_xp[new_level]:
+          new_level -= 1
+          leveled_down = True
+          print(f'{character_name} has leveled down to level {new_level}!')
+
+        # Update character's XP and level
+        await self.db.execute(
+          'UPDATE characters SET xp = ?, level = ? WHERE character_name = ?', (new_xp, new_level, character_name)
+        )
+        await self.db.commit()
+
+        if leveled_down:
+          # Announce level-down in the channel
+          time_remaining = self.time_until_next_level(new_level, new_xp)
+          time_formatted = self.format_time(time_remaining)
+          message = f"{nick}'s character {character_name} has dropped to level {new_level}. Time until next level: {time_formatted}"
+          self.send_channel_message(message)
+
+        # Notify the user about the penalty
+        penalty_message = f'Your character {character_name} has been penalized for {reason}.'
+        self.send_notice(nick, penalty_message)
+
+  @staticmethod
+  def parse_irc_line(line):
+    """
+    Parse a single line of IRC message.
+
+    Args:
+        line (str): The raw line.
+
+    Returns:
+        tuple: (prefix, command, params)
+    """
+    prefix = ''
+    trailing = []
+    if line.startswith(':'):
+      prefix, line = line[1:].split(' ', 1)
+    if ' :' in line:
+      line, trailing = line.split(' :', 1)
+      args = line.strip().split()
+      args.append(trailing)
+    else:
+      args = line.strip().split()
+    if not args:
+      command = ''
+    else:
+      command = args.pop(0)
+    return prefix, command, args
+
+  @staticmethod
+  def extract_nick_from_prefix(prefix):
+    """
+    Extract the nickname from the prefix.
+
+    Args:
+        prefix (str): The prefix string.
+
+    Returns:
+        str: Nickname.
+    """
+    if '!' in prefix:
+      nick = prefix.split('!', 1)[0]
+    else:
+      nick = prefix
+    return nick
 
   def precompute_cumulative_xp(self, max_level):
     """
@@ -297,37 +501,43 @@ class IdleZPGBot:
 
       async with self.db.execute('BEGIN TRANSACTION;'):
         for user in self.users:
-          # Fetch current XP and level
-          async with self.db.execute('SELECT xp, level FROM users WHERE nickname = ?', (user,)) as cursor:
+          # Fetch character associated with the user
+          async with self.db.execute(
+            'SELECT character_name, xp, level FROM characters WHERE owner_nick = ?', (user,)
+          ) as cursor:
             row = await cursor.fetchone()
             if row:
-              current_xp, current_level = row
+              character_name, current_xp, current_level = row
               new_xp = current_xp + self.xp_per_interval
               new_level = current_level
               leveled_up = False
 
               # Debug: Print current status
-              print(f'User: {user}, Current XP: {current_xp}, Current Level: {current_level}')
+              print(
+                f'User: {user}, Character: {character_name}, Current XP: {current_xp}, Current Level: {current_level}'
+              )
 
               # Check for level-ups
               while new_level + 1 < len(self.cumulative_xp) and new_xp >= self.cumulative_xp[new_level + 1]:
                 new_level += 1
                 leveled_up = True
-                print(f'{user} has leveled up to level {new_level}!')
+                print(f'{character_name} has leveled up to level {new_level}!')
 
-              # Update user's XP and level
-              await self.db.execute('UPDATE users SET xp = ?, level = ? WHERE nickname = ?', (new_xp, new_level, user))
+              # Update character's XP and level
+              await self.db.execute(
+                'UPDATE characters SET xp = ?, level = ? WHERE character_name = ?', (new_xp, new_level, character_name)
+              )
 
               if leveled_up:
                 # Announce level-up in the channel
                 time_remaining = self.time_until_next_level(new_level, new_xp)
                 time_formatted = self.format_time(time_remaining)
-                message = f'{user} has attained level {new_level}! Time until next level: {time_formatted}'
+                message = f"{user}'s character {character_name} has attained level {new_level}! Time until next level: {time_formatted}"
                 self.send_channel_message(message)
-          # No XP gain announcements needed
+
         await self.db.commit()
         # Debug: Indicate that XP has been awarded
-        print(f'Awarded {self.xp_per_interval} XP to users.')
+        print(f'Awarded {self.xp_per_interval} XP to characters.')
 
   async def join_channel(self):
     """
@@ -362,6 +572,17 @@ class IdleZPGBot:
         message (str): The message to send.
     """
     self.send_raw(f'PRIVMSG {self.channel} :{message}')
+
+  def send_notice(self, target_nick, message):
+    """
+    Send a private message to a user.
+
+    Args:
+        target_nick (str): The nickname of the user.
+        message (str): The message to send.
+    """
+    for line in message.split('\n'):
+      self.send_raw(f'NOTICE {target_nick} :{line}')
 
   async def disconnect(self):
     """

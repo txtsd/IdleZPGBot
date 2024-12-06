@@ -257,11 +257,13 @@ class IdleZPGBot:
       # Strip leading 'the' from class name
       class_name = self.strip_leading_the(class_name)
 
-      # Validate character_name and class_name (<=16 letters)
-      if not self.is_valid_name(character_name):
-        raise ValueError('Character names must be <=16 letters.')
-      if not self.is_valid_name(class_name):
-        raise ValueError('Class names must be <=16 letters.')
+      # Validate character_name and class_name (<=16 characters)
+      is_valid, error_message = self.is_valid_name(character_name)
+      if not is_valid:
+        raise ValueError(f'Invalid character name: {error_message}')
+      is_valid, error_message = self.is_valid_name(class_name, allow_spaces=True)
+      if not is_valid:
+        raise ValueError(f'Invalid class name: {error_message}')
 
       # Hash the password
       password_hash = self.ph.hash(password)
@@ -344,19 +346,44 @@ class IdleZPGBot:
       self.send_notice(sender_nick, error_message)
       print(f'Unregister failed for user {sender_nick}: {str(e)}')
 
-  def is_valid_name(self, name):
+  def is_valid_name(self, name, allow_spaces=False):
     """
-    Validate a name to ensure it is <=16 letters (unicode letters allowed).
+    Validate a name to ensure it is <=16 characters (excluding spaces if allowed).
+
+    Name can contain letters (accents, diacritics, CJK characters, etc.), numbers, dashes, and underscores.
+    Class names may contain spaces.
 
     Args:
         name (str): The name to validate.
+        allow_spaces (bool): Whether spaces are allowed in the name.
 
     Returns:
-        bool: True if valid, False otherwise.
+        Tuple[bool, str]: (is_valid, error_message) where is_valid is True if valid, False otherwise,
+                          and error_message contains the reason if invalid.
     """
     name = name.strip()
-    letter_count = sum(1 for c in name if c.isalpha())
-    return letter_count <= 16 and letter_count > 0
+    if not name:
+      return False, 'Name cannot be empty.'
+
+    # Allowed characters: letters, numbers, dashes, underscores, and optional spaces
+    invalid_chars = []
+    for c in name:
+      if c == ' ' and allow_spaces:
+        continue
+      elif c.isalnum() or c in ('-', '_'):
+        continue
+      else:
+        invalid_chars.append(c)
+
+    if invalid_chars:
+      invalid_chars_str = ''.join(sorted(set(invalid_chars)))
+      return False, f"Name contains invalid characters: '{invalid_chars_str}'"
+
+    # Count the number of characters (excluding spaces if allowed)
+    char_count = len(name.replace(' ', '')) if allow_spaces else len(name)
+    if char_count > 16:
+      return False, f'Name must be at most 16 characters, but it has {char_count} characters.'
+    return True, ''
 
   def strip_leading_the(self, s):
     """

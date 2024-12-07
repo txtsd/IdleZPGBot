@@ -221,8 +221,9 @@ class IdleZPGBot:
         message_text (str): The message content.
     """
     # Check if the message is a registration command
-    if message_text.startswith('register '):
-      await self.handle_register_command(sender_nick, message_text[9:].strip())
+    if message_text.strip().startswith('register'):
+      args = message_text[len('register') :].strip()
+      await self.handle_register_command(sender_nick, args)
     elif message_text.strip() == 'unregister':
       await self.handle_unregister_command(sender_nick)
 
@@ -234,6 +235,11 @@ class IdleZPGBot:
         sender_nick (str): Nickname of the sender.
         args (str): Arguments passed with the register command.
     """
+    registration_help_message = (
+      'To register, use: register <character_name> <class_name> <password>\n'
+      'Example: register Ragnarr_loðbrók Legendary Viking password123!@#'
+    )
+
     try:
       if self.db is None:
         raise RuntimeError('Database connection is not initialized')
@@ -246,9 +252,12 @@ class IdleZPGBot:
         if row:
           raise ValueError('You have already registered a character.')
 
+      if not args:
+        raise ValueError(registration_help_message)
+
       parts = args.split()
       if len(parts) < 3:
-        raise ValueError('Invalid number of arguments for registration.')
+        raise ValueError(registration_help_message)
 
       character_name = parts[0]
       class_name = ' '.join(parts[1:-1])

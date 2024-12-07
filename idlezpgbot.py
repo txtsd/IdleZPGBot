@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import ssl
+import time
 from typing import Optional, Set
 
 import aiosqlite
@@ -38,6 +39,7 @@ class IdleZPGBot:
     self.cumulative_xp = self.precompute_cumulative_xp(100)  # Precompute XP thresholds up to level 100
     self.nickname = self.config['irc']['nickname']  # Bot's own nickname
     self.ph = PasswordHasher()
+    self.connected = False
 
   async def connect(self):
     """
@@ -49,6 +51,8 @@ class IdleZPGBot:
     nickname = self.config['irc']['nickname']
     username = self.config['irc']['username']
     realname = self.config['irc']['realname']
+
+    self.connected = False
 
     # Create a default SSL context for secure connection
     ssl_context = ssl.create_default_context()
@@ -62,6 +66,8 @@ class IdleZPGBot:
     # Send NICK and USER commands as per IRC protocol
     self.send_raw(f'NICK {nickname}')
     self.send_raw(f'USER {username} 0 * :{realname}')
+
+    self.connected = True
 
   async def initialize_database(self):
     """
@@ -100,7 +106,7 @@ class IdleZPGBot:
           raise RuntimeError('Reader is not initialized')
 
         # Read data from the server
-        data = await self.reader.read(4096)
+        data = await asyncio.wait_for(self.reader.read(4096), timeout=180)
         if not data:
           # No data indicates the server has closed the connection
           raise ConnectionResetError('Connection lost')
@@ -154,6 +160,7 @@ class IdleZPGBot:
           # Handle names reply to get the list of users upon joining the channel
           elif command == '353':
             names = params[-1].split()
+            self.users.clear()  # Clear existing users before updating
             for user in names:
               user = user.lstrip('@+%&~')
               if user != nickname:
@@ -207,6 +214,9 @@ class IdleZPGBot:
 
         await self.writer.drain()
 
+      except asyncio.TimeoutError:
+        print('Read timeout. No data received from server in 180 seconds.')
+        raise ConnectionResetError('Connection lost due to timeout.')
       except asyncio.CancelledError:
         # Handle task cancellation gracefully
         print('Task cancelled during message processing.')
@@ -214,10 +224,10 @@ class IdleZPGBot:
       except ConnectionResetError as e:
         # Connection was lost
         print(f'ConnectionResetError: {e}')
-        raise e
+        break  # Exit the loop to trigger reconnect
       except Exception as e:
         print(f'Error in process_messages: {e}')
-        raise e
+        break  # Exit the loop to trigger reconnect
 
   async def handle_private_message(self, sender_nick, message_text):
     """
@@ -592,59 +602,84 @@ class IdleZPGBot:
     parts.append(f'{seconds}s')
     return ' '.join(parts)
 
+  async def refresh_user_list(self):
+    """
+    Request an updated list of users in the channel.
+    """
+    self.send_raw(f'NAMES {self.channel}')
+
   async def award_experience(self):
     """
     Background task to award experience points to users in the channel.
     """
-    while True:
-      await asyncio.sleep(self.xp_interval)
-      if not self.users:
-        continue  # No users to award XP to
+    refresh_interval = 600  # Refresh user list every 600 seconds (10 minutes)
+    last_refresh = time.monotonic()
+    while self.connected:
+      try:
+        await asyncio.sleep(self.xp_interval)
+        if not self.connected:
+          print('Bot is disconnected. Stopping XP awards.')
+          break
+        if not self.users:
+          continue  # No users to award XP to
 
-      if self.db is None:
-        raise RuntimeError('Database connection is not initialized')
+        # Refresh user list periodically
+        current_time = time.monotonic()
+        if current_time - last_refresh >= refresh_interval:
+          await self.refresh_user_list()
+          last_refresh = current_time
 
-      async with self.db.execute('BEGIN TRANSACTION;'):
-        for user in self.users:
-          # Fetch character associated with the user
-          async with self.db.execute(
-            'SELECT character_name, class_name, xp, level FROM characters WHERE owner_nick = ?',
-            (user,),
-          ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-              character_name, class_name, current_xp, current_level = row
-              new_xp = current_xp + self.xp_per_interval
-              new_level = current_level
-              leveled_up = False
+        if self.db is None:
+          raise RuntimeError('Database connection is not initialized')
 
-              # Debug: Print current status
-              print(
-                f'User: {user}, Character: {character_name}, Class: {class_name}, Current XP: {current_xp}, Current Level: {current_level}'
-              )
+        async with self.db.execute('BEGIN TRANSACTION;'):
+          for user in self.users:
+            # Fetch character associated with the user
+            async with self.db.execute(
+              'SELECT character_name, class_name, xp, level FROM characters WHERE owner_nick = ?',
+              (user,),
+            ) as cursor:
+              row = await cursor.fetchone()
+              if row:
+                character_name, class_name, current_xp, current_level = row
+                new_xp = current_xp + self.xp_per_interval
+                new_level = current_level
+                leveled_up = False
 
-              # Check for level-ups
-              while new_level + 1 < len(self.cumulative_xp) and new_xp >= self.cumulative_xp[new_level + 1]:
-                new_level += 1
-                leveled_up = True
-                print(f"{user}'s {character_name} has leveled up to level {new_level}!")
+                # Debug: Print current status
+                print(
+                  f'User: {user}, Character: {character_name}, Class: {class_name}, Current XP: {current_xp}, Current Level: {current_level}'
+                )
 
-              # Update character's XP and level
-              await self.db.execute(
-                'UPDATE characters SET xp = ?, level = ? WHERE character_name = ?', (new_xp, new_level, character_name)
-              )
+                # Check for level-ups
+                while new_level + 1 < len(self.cumulative_xp) and new_xp >= self.cumulative_xp[new_level + 1]:
+                  new_level += 1
+                  leveled_up = True
+                  print(f"{user}'s {character_name} has leveled up to level {new_level}!")
 
-              if leveled_up:
-                # Announce level-up in the channel
-                time_remaining = self.time_until_next_level(new_level, new_xp)
-                time_formatted = self.format_time(time_remaining)
-                # Updated message to include the class name
-                message = f"{user}'s character {character_name}, the {class_name}, has attained level {new_level}! Time until next level: {time_formatted}"
-                self.send_channel_message(message)
+                # Update character's XP and level
+                await self.db.execute(
+                  'UPDATE characters SET xp = ?, level = ? WHERE character_name = ?',
+                  (new_xp, new_level, character_name),
+                )
 
-        await self.db.commit()
-        # Debug: Indicate that XP has been awarded
-        print(f'Awarded {self.xp_per_interval} XP to characters.')
+                if leveled_up:
+                  # Announce level-up in the channel
+                  time_remaining = self.time_until_next_level(new_level, new_xp)
+                  time_formatted = self.format_time(time_remaining)
+                  # Updated message to include the class name
+                  message = f"{user}'s character {character_name}, the {class_name}, has attained level {new_level}! Time until next level: {time_formatted}"
+                  self.send_channel_message(message)
+
+          await self.db.commit()
+          # Debug: Indicate that XP has been awarded
+          print(f'Awarded {self.xp_per_interval} XP to characters.')
+      except asyncio.CancelledError:
+        print('XP awarding task cancelled.')
+        break
+      except Exception as e:
+        print(f'Error in award_experience: {e}')
+        break
 
   async def join_channel(self):
     """
@@ -710,11 +745,14 @@ class IdleZPGBot:
         print('Closing connection...')
         # Cancel the background XP task if it's running
         if self.xp_task:
+          print('Cancelling XP awarding task...')
           self.xp_task.cancel()
           try:
             await self.xp_task
           except asyncio.CancelledError:
             pass
+        self.connected = False
+        self.users.clear()
         # Close the writer stream to terminate the connection
         self.writer.close()
         await self.writer.wait_closed()

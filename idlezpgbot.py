@@ -420,14 +420,13 @@ class IdleZPGBot:
     penalty_xp = self.xp_per_interval  # Define penalty amount (same as xp per interval)
     if self.db is None:
       raise RuntimeError('Database connection is not initialized')
-      return
     # Fetch the character associated with the nick
     async with self.db.execute(
-      'SELECT character_name, xp, level FROM characters WHERE owner_nick = ?', (nick,)
+      'SELECT character_name, class_name, xp, level FROM characters WHERE owner_nick = ?', (nick,)
     ) as cursor:
       row = await cursor.fetchone()
       if row:
-        character_name, current_xp, current_level = row
+        character_name, class_name, current_xp, current_level = row
         new_xp = max(current_xp - penalty_xp, 0)
         new_level = current_level
         leveled_down = False
@@ -451,8 +450,21 @@ class IdleZPGBot:
           message = f"{nick}'s character {character_name} has dropped to level {new_level}. Time until next level: {time_formatted}"
           self.send_channel_message(message)
 
+        # Map reason to 'reasoning' form
+        reason_ing_map = {
+          'PART': 'parting',
+          'QUIT': 'quitting',
+          'TALK': 'talking',
+          'NICK': 'changing nick',
+        }
+        reason_text = reason_ing_map.get(reason.upper(), reason.lower() + 'ing')
+
+        # Send the public penalty message
+        public_message = f"{nick}'s character {character_name}, the {class_name}, has been penalized for {reason_text}."
+        self.send_channel_message(public_message)
+
         # Notify the user about the penalty
-        penalty_message = f'Your character {character_name} has been penalized for {reason}.'
+        penalty_message = f'Your character {character_name}, the {class_name}, has been penalized for {reason_text}.'
         self.send_notice(nick, penalty_message)
 
   @staticmethod

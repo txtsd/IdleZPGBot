@@ -103,7 +103,7 @@ class IdleZPGBot:
         data = await self.reader.read(4096)
         if not data:
           # No data indicates the server has closed the connection
-          break
+          raise ConnectionResetError('Connection lost')
 
         # Decode the received data to a string
         message = data.decode('utf-8', errors='ignore').strip()
@@ -211,6 +211,13 @@ class IdleZPGBot:
         # Handle task cancellation gracefully
         print('Task cancelled during message processing.')
         break
+      except ConnectionResetError as e:
+        # Connection was lost
+        print(f'ConnectionResetError: {e}')
+        raise e
+      except Exception as e:
+        print(f'Error in process_messages: {e}')
+        raise e
 
   async def handle_private_message(self, sender_nick, message_text):
     """
@@ -728,22 +735,37 @@ async def run():
   # Instantiate the IRC bot with the loaded configuration
   bot = IdleZPGBot(config)
 
-  try:
-    # Connect to the server and process messages
-    await bot.connect()
-    await bot.process_messages()
-  except KeyboardInterrupt:
-    # Handle user interrupt (Ctrl+C)
-    print('Keyboard interrupt received. Exiting...')
-  except ssl.SSLError as e:
-    # Handle SSL errors during connection
-    print(f'SSL error: {e}')
-  except Exception as e:
-    # Handle any other unexpected exceptions
-    print(f'Unexpected error: {e}')
-  finally:
-    # Ensure the bot disconnects cleanly
-    await bot.disconnect()
+  reconnect_attempts = 0
+  MAX_RECONNECT_ATTEMPTS = 5
+  RECONNECT_DELAY = 10  # seconds
+
+  while reconnect_attempts <= MAX_RECONNECT_ATTEMPTS:
+    try:
+      await bot.connect()
+      await bot.process_messages()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+      # Handle user interrupt (Ctrl+C)
+      print('Keyboard interrupt received. Exiting...')
+      break
+    except Exception as e:
+      # Handle any other exceptions by attempting to reconnect
+      reconnect_attempts += 1
+      print(f'Error: {e}')
+      if reconnect_attempts <= MAX_RECONNECT_ATTEMPTS:
+        print(
+          f'Attempting to reconnect in {RECONNECT_DELAY} seconds... (Attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS})'
+        )
+        await asyncio.sleep(RECONNECT_DELAY)
+      else:
+        print('Max reconnect attempts reached. Exiting.')
+        break
+    finally:
+      # Ensure the bot disconnects cleanly
+      await bot.disconnect()
+      # Re-initialize the bot
+      bot = IdleZPGBot(config)
+
+  print('Program terminated.')
 
 
 def main():

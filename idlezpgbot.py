@@ -580,25 +580,26 @@ class IdleZPGBot:
         for user in self.users:
           # Fetch character associated with the user
           async with self.db.execute(
-            'SELECT character_name, xp, level FROM characters WHERE owner_nick = ?', (user,)
+            'SELECT character_name, class_name, xp, level FROM characters WHERE owner_nick = ?',
+            (user,),
           ) as cursor:
             row = await cursor.fetchone()
             if row:
-              character_name, current_xp, current_level = row
+              character_name, class_name, current_xp, current_level = row
               new_xp = current_xp + self.xp_per_interval
               new_level = current_level
               leveled_up = False
 
               # Debug: Print current status
               print(
-                f'User: {user}, Character: {character_name}, Current XP: {current_xp}, Current Level: {current_level}'
+                f'User: {user}, Character: {character_name}, Class: {class_name}, Current XP: {current_xp}, Current Level: {current_level}'
               )
 
               # Check for level-ups
               while new_level + 1 < len(self.cumulative_xp) and new_xp >= self.cumulative_xp[new_level + 1]:
                 new_level += 1
                 leveled_up = True
-                print(f'{character_name} has leveled up to level {new_level}!')
+                print(f"{user}'s {character_name} has leveled up to level {new_level}!")
 
               # Update character's XP and level
               await self.db.execute(
@@ -609,7 +610,8 @@ class IdleZPGBot:
                 # Announce level-up in the channel
                 time_remaining = self.time_until_next_level(new_level, new_xp)
                 time_formatted = self.format_time(time_remaining)
-                message = f"{user}'s character {character_name} has attained level {new_level}! Time until next level: {time_formatted}"
+                # Updated message to include the class name
+                message = f"{user}'s character {character_name}, the {class_name}, has attained level {new_level}! Time until next level: {time_formatted}"
                 self.send_channel_message(message)
 
         await self.db.commit()

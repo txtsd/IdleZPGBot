@@ -107,7 +107,7 @@ class IdleZPGBot:
           raise RuntimeError('Reader is not initialized')
 
         # Read data from the server
-        data = await asyncio.wait_for(self.reader.read(4096), timeout=180)
+        data = await asyncio.wait_for(self.reader.read(4096), timeout=300)
         if not data:
           # No data indicates the server has closed the connection
           raise ConnectionResetError('Connection lost')
@@ -220,7 +220,7 @@ class IdleZPGBot:
         await self.writer.drain()
 
       except asyncio.TimeoutError:
-        print('Read timeout. No data received from server in 180 seconds.')
+        print('Read timeout. No data received from server in 300 seconds.')
         raise ConnectionResetError('Connection lost due to timeout.')
       except asyncio.CancelledError:
         # Handle task cancellation gracefully

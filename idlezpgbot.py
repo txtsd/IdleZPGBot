@@ -40,6 +40,7 @@ class IdleZPGBot:
     self.nickname = self.config['irc']['nickname']  # Bot's own nickname
     self.ph = PasswordHasher()
     self.connected = False
+    self.ignored_users = [self.config['irc']['nickname'], 'ChanServ']
 
   async def connect(self):
     """
@@ -163,13 +164,13 @@ class IdleZPGBot:
             self.users.clear()  # Clear existing users before updating
             for user in names:
               user = user.lstrip('@+%&~')
-              if user != nickname:
+              if user not in self.ignored_users:
                 self.users.add(user)
                 print(f'User in channel: {user}')
 
           # Handle JOIN messages
           elif command == 'JOIN':
-            if sender_nick != nickname:
+            if sender_nick not in self.ignored_users:
               self.users.add(sender_nick)
               print(f'{sender_nick} joined the channel.')
 
@@ -177,13 +178,15 @@ class IdleZPGBot:
           elif command == 'PART':
             self.users.discard(sender_nick)
             print(f'{sender_nick} left the channel.')
-            await self.apply_penalty(sender_nick, reason='PART')
+            if sender_nick not in self.ignored_users:
+              await self.apply_penalty(sender_nick, reason='PART')
 
           # Handle QUIT messages
           elif command == 'QUIT':
             self.users.discard(sender_nick)
             print(f'{sender_nick} quit the server.')
-            await self.apply_penalty(sender_nick, reason='QUIT')
+            if sender_nick not in self.ignored_users:
+              await self.apply_penalty(sender_nick, reason='QUIT')
 
           # Handle NICK changes
           elif command == 'NICK':
@@ -192,7 +195,8 @@ class IdleZPGBot:
               self.users.discard(sender_nick)
               self.users.add(new_nick)
               print(f'{sender_nick} changed nick to {new_nick}')
-              await self.apply_penalty(sender_nick, reason='NICK')
+              if sender_nick not in self.ignored_users:
+                await self.apply_penalty(sender_nick, reason='NICK')
             if sender_nick == nickname:
               self.nickname = new_nick
 
@@ -207,7 +211,8 @@ class IdleZPGBot:
               # Message in the channel
               print(f'{sender_nick} in channel: {message_text}')
               # Apply penalty for talking in the channel
-              await self.apply_penalty(sender_nick, reason='TALK')
+              if sender_nick not in self.ignored_users:
+                await self.apply_penalty(sender_nick, reason='TALK')
 
         if self.writer is None:
           raise RuntimeError('Writer is not initialized')

@@ -227,10 +227,10 @@ class IdleZPGBot:
       except asyncio.TimeoutError:
         print('Read timeout. No data received from server in 300 seconds.')
         raise ConnectionResetError('Connection lost due to timeout.')
-      except asyncio.CancelledError:
+      except (KeyboardInterrupt, asyncio.CancelledError) as e:
         # Handle task cancellation gracefully
         print('Task cancelled during message processing.')
-        break
+        raise e
       except ssl.SSLError as e:
         # Handle SSL errors, such as receiving data after close_notify
         print(f'SSL error in process_messages: {e}')

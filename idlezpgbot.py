@@ -35,12 +35,14 @@ class IdleZPGBot:
     self.xp_per_interval = 10  # XP awarded per interval
     self.xp_per_second = self.xp_per_interval / self.xp_interval  # XP awarded per second
     self.xp_task: Optional[asyncio.Task] = None  # Background task for awarding XP
+    self.message_task: Optional[asyncio.Task] = None  # Task for processing messages
     self.db: Optional[Connection] = None  # Database connection
     self.cumulative_xp = self.precompute_cumulative_xp(100)  # Precompute XP thresholds up to level 100
     self.nickname = self.config['irc']['nickname']  # Bot's own nickname
     self.ph = PasswordHasher()
     self.connected = False
     self.ignored_users = [self.config['irc']['nickname'], 'ChanServ']
+    self.shutdown = False  # Flag to indicate shutdown
 
   async def connect(self):
     """
@@ -57,6 +59,9 @@ class IdleZPGBot:
 
     # Create a default SSL context for secure connection
     ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
+    ssl_context.suppress_ragged_eofs = True
 
     # Open a connection to the server with SSL
     self.reader, self.writer = await asyncio.open_connection(server, port, ssl=ssl_context)
@@ -101,7 +106,7 @@ class IdleZPGBot:
     nickname = self.config['irc']['nickname']
     password = self.config['irc']['nickserv_password']
 
-    while True:
+    while not self.shutdown:
       try:
         if self.reader is None:
           raise RuntimeError('Reader is not initialized')
@@ -226,6 +231,10 @@ class IdleZPGBot:
         # Handle task cancellation gracefully
         print('Task cancelled during message processing.')
         break
+      except ssl.SSLError as e:
+        # Handle SSL errors, such as receiving data after close_notify
+        print(f'SSL error in process_messages: {e}')
+        break  # Exit the loop to allow for reconnect or clean shutdown
       except ConnectionResetError as e:
         # Connection was lost
         print(f'ConnectionResetError: {e}')
@@ -233,6 +242,8 @@ class IdleZPGBot:
       except Exception as e:
         print(f'Error in process_messages: {e}')
         break  # Exit the loop to trigger reconnect
+
+    print('Exiting process_messages loop.')
 
   async def handle_private_message(self, sender_nick, message_text):
     """
@@ -735,6 +746,8 @@ class IdleZPGBot:
     """
     Gracefully disconnect from the IRC server by sending the QUIT command.
     """
+    # Indicate that the bot is shutting down
+    self.shutdown = True
     # Get a custom quit message from the configuration, or use a default
     quit_message = self.config['irc'].get('quit_message', 'Goodbye!')
     try:
@@ -746,6 +759,13 @@ class IdleZPGBot:
     except Exception as e:
       print(f'Error while sending QUIT: {e}')
     finally:
+      if self.message_task is not None:
+        print('Cancelling message processing task...')
+        self.message_task.cancel()
+        try:
+          await self.message_task
+        except asyncio.CancelledError:
+          pass
       if self.writer:
         print('Closing connection...')
         # Cancel the background XP task if it's running
@@ -785,7 +805,9 @@ async def run():
   while reconnect_attempts <= MAX_RECONNECT_ATTEMPTS:
     try:
       await bot.connect()
-      await bot.process_messages()
+      # Run process_messages as a separate task
+      bot.message_task = asyncio.create_task(bot.process_messages())
+      await bot.message_task
     except (KeyboardInterrupt, asyncio.CancelledError):
       # Handle user interrupt (Ctrl+C)
       print('Keyboard interrupt received. Exiting...')

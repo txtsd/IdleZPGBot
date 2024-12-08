@@ -31,18 +31,23 @@ class IdleZPGBot:
     self.writer: Optional[asyncio.StreamWriter] = None
     self.channel = self.config['irc']['channel']
     self.users: Set[str] = set()  # Users currently in the channel
-    self.xp_interval = 60  # Time interval in seconds to award XP
-    self.xp_per_interval = 10  # XP awarded per interval
+    self.xp_interval = self.config['game']['xp_interval']  # Time interval in seconds to award XP
+    self.xp_per_interval = self.config['game']['xp_per_interval']  # XP awarded per interval
     self.xp_per_second = self.xp_per_interval / self.xp_interval  # XP awarded per second
     self.xp_task: Optional[asyncio.Task] = None  # Background task for awarding XP
     self.message_task: Optional[asyncio.Task] = None  # Task for processing messages
     self.db: Optional[Connection] = None  # Database connection
-    self.cumulative_xp = self.precompute_cumulative_xp(100)  # Precompute XP thresholds up to level 100
+    self.max_level = self.config['game']['max_level']
+    self.precompute_base_time = self.config['game']['precompute_base_time']
+    self.precompute_exponent = self.config['game']['precompute_exponent']
+    self.additional_time_per_level = self.config['game']['additional_time_per_level']
+    self.cumulative_xp = self.precompute_cumulative_xp(self.max_level)  # Precompute XP thresholds up to max_level
     self.nickname = self.config['irc']['nickname']  # Bot's own nickname
     self.ph = PasswordHasher()
     self.connected = False
-    self.ignored_users = [self.config['irc']['nickname'], 'ChanServ']
+    self.ignored_users = self.config['irc'].get('ignored_users', [self.nickname, 'ChanServ'])
     self.shutdown = False  # Flag to indicate shutdown
+    self.penalty_multiplier = self.config['game'].get('penalty_multiplier', 1.0)
 
   async def connect(self):
     """
@@ -105,6 +110,7 @@ class IdleZPGBot:
     # Extract required credentials from configuration
     nickname = self.config['irc']['nickname']
     password = self.config['irc']['nickserv_password']
+    timeout = self.config['irc']['read_timeout']  # Read timeout in seconds
 
     while not self.shutdown:
       try:
@@ -112,7 +118,7 @@ class IdleZPGBot:
           raise RuntimeError('Reader is not initialized')
 
         # Read data from the server
-        data = await asyncio.wait_for(self.reader.read(4096), timeout=300)
+        data = await asyncio.wait_for(self.reader.read(4096), timeout=timeout)
         if not data:
           # No data indicates the server has closed the connection
           raise ConnectionResetError('Connection lost')
@@ -225,7 +231,7 @@ class IdleZPGBot:
         await self.writer.drain()
 
       except asyncio.TimeoutError:
-        print('Read timeout. No data received from server in 300 seconds.')
+        print(f'Read timeout. No data received from server in {timeout} seconds.')
         raise ConnectionResetError('Connection lost due to timeout.')
       except (KeyboardInterrupt, asyncio.CancelledError) as e:
         # Handle task cancellation gracefully
@@ -450,7 +456,7 @@ class IdleZPGBot:
         nick (str): Nickname of the user.
         reason (str): Reason for the penalty (e.g., 'TALK', 'PART', 'QUIT', 'NICK').
     """
-    penalty_xp = self.xp_per_interval  # Define penalty amount (same as xp per interval)
+    penalty_xp = self.xp_per_interval * self.penalty_multiplier  # Define penalty amount
     if self.db is None:
       raise RuntimeError('Database connection is not initialized')
     # Fetch the character associated with the nick
@@ -555,22 +561,25 @@ class IdleZPGBot:
         list: List of cumulative XP thresholds indexed by level.
     """
     cumulative_xp = [0] * (max_level + 2)  # Adjusted to start from level 0
-    xp_per_second = self.xp_per_interval / self.xp_interval
+    xp_per_second = self.xp_per_second
 
     # Level 0 starts at XP 0
     cumulative_xp[0] = 0
 
+    base_time = self.precompute_base_time
+    exponent = self.precompute_exponent
+    additional_time_per_level = self.additional_time_per_level
+
     # Precompute XP for levels 1 to 60
     for level in range(1, 61):
-      time_to_level = 600 * (1.16 ** (level - 1))  # Adjusted exponent
+      time_to_level = base_time * (exponent ** (level - 1))  # Adjusted exponent
       xp_to_level = time_to_level * xp_per_second
       cumulative_xp[level] = cumulative_xp[level - 1] + xp_to_level
 
     # Precompute XP for levels above 60
-    time_to_level_60 = 600 * (1.16**59)
-    xp_to_level_60 = time_to_level_60 * xp_per_second
+    time_to_level_60 = base_time * (exponent**59)
     for level in range(61, max_level + 1):
-      time_to_level = time_to_level_60 + 86400 * (level - 60)
+      time_to_level = time_to_level_60 + additional_time_per_level * (level - 60)
       xp_to_level = time_to_level * xp_per_second
       cumulative_xp[level] = cumulative_xp[level - 1] + xp_to_level
 
@@ -628,7 +637,7 @@ class IdleZPGBot:
     """
     Background task to award experience points to users in the channel.
     """
-    refresh_interval = 600  # Refresh user list every 600 seconds (10 minutes)
+    refresh_interval = self.config['game']['refresh_interval']  # Refresh user list every X seconds
     last_refresh = time.monotonic()
     while self.connected:
       try:
@@ -799,8 +808,8 @@ async def run():
   bot = IdleZPGBot(config)
 
   reconnect_attempts = 0
-  MAX_RECONNECT_ATTEMPTS = 5
-  RECONNECT_DELAY = 10  # seconds
+  MAX_RECONNECT_ATTEMPTS = config['irc']['max_reconnect_attempts']
+  RECONNECT_DELAY = config['irc']['reconnect_delay']
 
   while reconnect_attempts <= MAX_RECONNECT_ATTEMPTS:
     try:

@@ -64,9 +64,22 @@ realname = "Your Bot Real Name"     # Bot's real name
 nickserv_password = "YourPassword"  # Password for SASL authentication
 channel = "#yourchannel"            # IRC channel to join
 quit_message = "Goodbye!"           # Message sent upon disconnect
+max_reconnect_attempts = 10         # Maximum number of reconnect attempts
+reconnect_delay = 10                # Delay between reconnect attempts (in seconds)
+read_timeout = 300                  # Read timeout in seconds
 
 [database]
 path = "idlezpgbot.db"              # Path to the SQLite database file
+
+[game]
+xp_interval = 60                    # Time interval in seconds to award XP
+xp_per_interval = 10                # XP awarded per interval
+max_level = 100                     # Maximum level for characters
+precompute_base_time = 600          # Base time for initial level-up calculations
+precompute_exponent = 1.16          # Exponent for level-up time scaling
+additional_time_per_level = 86400   # Additional time per level after level 60 (in seconds)
+refresh_interval = 60               # Refresh user list every X seconds
+penalty_multiplier = 1.0            # Multiplier for penalty XP (penalty XP = xp_per_interval * penalty_multiplier)
 ```
 
 ### Configuration Sections
@@ -81,11 +94,26 @@ path = "idlezpgbot.db"              # Path to the SQLite database file
 - **nickserv_password**: The password for SASL authentication. Ensure this is kept secure.
 - **channel**: The IRC channel that the bot will join upon connecting.
 - **quit_message**: A custom message sent to the server when the bot disconnects.
+- **max_reconnect_attempts**: The maximum number of times the bot will attempt to reconnect to the server if the
+connection is lost.
+- **reconnect_delay**: The delay in seconds between reconnect attempts.
+- **read_timeout**: The timeout in seconds for reading data from the server.
 
 #### `[database]` Section
 
 - **path**: Specifies the file path for the SQLite database where user data (XP and levels) will be stored. Ensure that
 the bot has read and write permissions for this path.
+
+#### `[game]` Section
+
+- **xp_interval**: The time interval in seconds at which XP is awarded to users.
+- **xp_per_interval**: The amount of XP awarded per interval.
+- **max_level**: The maximum level that characters can reach.
+- **precompute_base_time**: The base time for initial level-up calculations.
+- **precompute_exponent**: The exponent used for scaling the time required to level up.
+- **additional_time_per_level**: The additional time in seconds required per level after level 60.
+- **refresh_interval**: The interval in seconds at which the user list is refreshed.
+- **penalty_multiplier**: The multiplier applied to the XP penalty for actions such as talking, parting, quitting, and changing nicks.
 
 ### Database Details
 

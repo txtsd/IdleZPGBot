@@ -64,9 +64,8 @@ class IdleZPGBot:
 
     # Create a default SSL context for secure connection
     ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
+    ssl_context.check_hostname = True
     ssl_context.verify_mode = ssl.CERT_REQUIRED
-    ssl_context.suppress_ragged_eofs = True
 
     # Open a connection to the server with SSL
     self.reader, self.writer = await asyncio.open_connection(server, port, ssl=ssl_context)

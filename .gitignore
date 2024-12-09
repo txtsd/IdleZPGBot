@@ -15,3 +15,6 @@ wheels/
 # Config and db
 config.toml
 idlezpg.db
+
+# Logs
+*.log

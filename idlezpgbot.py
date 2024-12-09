@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import logging
 import ssl
 import time
 from typing import Optional, Set
@@ -8,6 +9,45 @@ import aiosqlite
 import toml
 from aiosqlite import Connection
 from argon2 import PasswordHasher
+
+# Configure logging
+irc_logger = logging.getLogger('irc')
+privmsg_logger = logging.getLogger('privmsg')
+bot_logger = logging.getLogger('bot')
+
+# Set log levels for all loggers to DEBUG
+irc_logger.setLevel(logging.DEBUG)
+privmsg_logger.setLevel(logging.DEBUG)
+bot_logger.setLevel(logging.DEBUG)
+
+# Create file handlers for each logger
+irc_file_handler = logging.FileHandler('irc.log', mode='a')
+privmsg_file_handler = logging.FileHandler('privmsg.log', mode='a')
+bot_file_handler = logging.FileHandler('bot.log', mode='a')
+
+# Set log levels for file handlers to DEBUG
+irc_file_handler.setLevel(logging.DEBUG)
+privmsg_file_handler.setLevel(logging.DEBUG)
+bot_file_handler.setLevel(logging.DEBUG)
+
+# Create a console handler with a configurable log level
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)  # Default level, can be configured
+
+# Create a formatter and set it for all handlers
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+irc_file_handler.setFormatter(formatter)
+privmsg_file_handler.setFormatter(formatter)
+bot_file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+# Add the file handlers to the respective loggers
+irc_logger.addHandler(irc_file_handler)
+privmsg_logger.addHandler(privmsg_file_handler)
+bot_logger.addHandler(bot_file_handler)
+
+# Add the console handler to the bot logger (or any other logger if needed)
+bot_logger.addHandler(console_handler)
 
 
 class IdleZPGBot:
@@ -199,8 +239,8 @@ class IdleZPGBot:
         for line in lines:
           if not line:
             continue
-          # Debug print received line.
-          print(f'{line}')
+          # Log received line.
+          irc_logger.debug(f'{line}')
 
           # Respond to server PING messages to keep the connection alive.
           if line.startswith('PING'):
@@ -227,12 +267,12 @@ class IdleZPGBot:
             self.send_raw(f'AUTHENTICATE {auth_message}')
           elif command == '903':
             # SASL authentication was successful.
-            print('SASL authentication successful')
+            bot_logger.info('SASL authentication successful')
             # End capability negotiation.
             self.send_raw('CAP END')
           elif command == '904' or command == '905':
             # SASL authentication failed.
-            print('SASL authentication failed')
+            bot_logger.error('SASL authentication failed')
             return  # Exit the loop and disconnect.
           elif command == '376' or command == '422':
             # Server has sent the Message of the Day (MOTD), indicating login is complete.
@@ -248,22 +288,22 @@ class IdleZPGBot:
               user = user.lstrip('@+%&~')
               if user not in self.ignored_users:
                 self.users.add(user)
-                print(f'User in channel: {user}')
+                bot_logger.debug(f'User in channel: {user}')
           elif command == 'JOIN':
             # Handle JOIN messages (when a user joins the channel).
             if sender_nick not in self.ignored_users:
               self.users.add(sender_nick)
-              print(f'{sender_nick} joined the channel.')
+              bot_logger.info(f'{sender_nick} joined the channel.')
           elif command == 'PART':
             # Handle PART messages (when a user leaves the channel).
             self.users.discard(sender_nick)
-            print(f'{sender_nick} left the channel.')
+            bot_logger.info(f'{sender_nick} left the channel.')
             if sender_nick not in self.ignored_users:
               await self.apply_penalty(sender_nick, reason='PART')
           elif command == 'QUIT':
             # Handle QUIT messages (when a user disconnects from the server).
             self.users.discard(sender_nick)
-            print(f'{sender_nick} quit the server.')
+            bot_logger.info(f'{sender_nick} quit the server.')
             if sender_nick not in self.ignored_users:
               await self.apply_penalty(sender_nick, reason='QUIT')
           elif command == 'NICK':
@@ -272,7 +312,7 @@ class IdleZPGBot:
             if sender_nick in self.users:
               self.users.discard(sender_nick)
               self.users.add(new_nick)
-              print(f'{sender_nick} changed nick to {new_nick}')
+              bot_logger.info(f'{sender_nick} changed nick to {new_nick}')
               if sender_nick not in self.ignored_users:
                 await self.apply_penalty(sender_nick, reason='NICK')
             if sender_nick == nickname:
@@ -287,7 +327,7 @@ class IdleZPGBot:
               await self.handle_private_message(sender_nick, message_text)
             elif target == self.channel:
               # Message in the channel.
-              print(f'{sender_nick} in channel: {message_text}')
+              privmsg_logger.info(f'{sender_nick} in channel: {message_text}')
               # Apply penalty for talking in the channel.
               if sender_nick not in self.ignored_users:
                 await self.apply_penalty(sender_nick, reason='TALK')
@@ -299,34 +339,34 @@ class IdleZPGBot:
         await self.writer.drain()
 
       except asyncio.TimeoutError:
-        print(f'Read timeout. No data received from server in {timeout} seconds.')
+        bot_logger.error(f'Read timeout. No data received from server in {timeout} seconds.')
         raise ConnectionResetError('Connection lost due to timeout.')
       except KeyboardInterrupt as e:
         # Handle keyboard interrupt.
-        print('KeyboardInterrupt during message processing.')
+        bot_logger.warning('KeyboardInterrupt during message processing.')
         raise e
       except asyncio.CancelledError:
-        print('Task cancelled during message processing.')
+        bot_logger.warning('Task cancelled during message processing.')
         return
       except ssl.SSLError as e:
         # Handle SSL errors, such as receiving data after close_notify.
-        print(f'SSL error in process_messages: {e}')
+        bot_logger.error(f'SSL error in process_messages: {e}')
         # Exit the loop to allow for reconnect or clean shutdown.
         break
       except ConnectionResetError as e:
         # Connection was lost.
-        print(f'ConnectionResetError: {e}')
+        bot_logger.error(f'ConnectionResetError: {e}')
         # Exit the loop to trigger reconnect.
         break
       except Exception as e:
         if self.shutdown:
-          print(f'Error in process_messages during shutdown: {e}')
+          bot_logger.error(f'Error in process_messages during shutdown: {e}')
           return
-        print(f'Error in process_messages: {e}')
+        bot_logger.error(f'Error in process_messages: {e}')
         # Exit the loop to trigger reconnect.
         break
 
-    print('Exiting process_messages loop.')
+    bot_logger.info('Exiting process_messages loop.')
 
   async def handle_private_message(self, sender_nick, message_text):
     """
@@ -435,12 +475,12 @@ class IdleZPGBot:
       channel_message = f"Welcome {sender_nick}'s new player: {character_name}, the {class_name}! Time until next level: {time_formatted}"
       self.send_channel_message(channel_message)
 
-      print(f'User {sender_nick} registered character {character_name}, the {class_name}')
+      bot_logger.info(f'User {sender_nick} registered character {character_name}, the {class_name}')
     except ValueError as e:
       # Send error message to the user.
       error_message = str(e)
       self.send_notice(sender_nick, error_message)
-      print(f'Registration failed for user {sender_nick}: {str(e)}')
+      bot_logger.error(f'Registration failed for user {sender_nick}: {str(e)}')
 
   async def handle_unregister_command(self, sender_nick):
     """
@@ -478,12 +518,12 @@ class IdleZPGBot:
       channel_message = f'{sender_nick} has unregistered their character {character_name}.'
       self.send_channel_message(channel_message)
 
-      print(f'User {sender_nick} unregistered character {character_name}')
+      bot_logger.info(f'User {sender_nick} unregistered character {character_name}')
     except ValueError as e:
       # Send error message to the user.
       error_message = str(e)
       self.send_notice(sender_nick, error_message)
-      print(f'Unregister failed for user {sender_nick}: {str(e)}')
+      bot_logger.error(f'Unregister failed for user {sender_nick}: {str(e)}')
 
   def is_valid_name(self, name, allow_spaces=False):
     """
@@ -576,7 +616,7 @@ class IdleZPGBot:
         while new_level > 0 and new_xp < self.cumulative_xp[new_level]:
           new_level -= 1
           leveled_down = True
-          print(f'{character_name} has leveled down to level {new_level}!')
+          bot_logger.info(f'{character_name} has leveled down to level {new_level}!')
 
         # Update character's XP and level.
         await self.db.execute(
@@ -759,7 +799,7 @@ class IdleZPGBot:
         # Sleep for the XP awarding interval.
         await asyncio.sleep(self.xp_interval)
         if not self.connected:
-          print('Bot is disconnected. Stopping XP awards.')
+          bot_logger.info('Bot is disconnected. Stopping XP awards.')
           break
         # No users to award XP to.
         if not self.users:
@@ -789,8 +829,8 @@ class IdleZPGBot:
                 new_level = current_level
                 leveled_up = False
 
-                # Debug: Print current status.
-                print(
+                # Log current status.
+                bot_logger.debug(
                   f'User: {user}, Character: {character_name}, Class: {class_name}, Current XP: {current_xp}, Current Level: {current_level}'
                 )
 
@@ -798,7 +838,7 @@ class IdleZPGBot:
                 while new_level + 1 < len(self.cumulative_xp) and new_xp >= self.cumulative_xp[new_level + 1]:
                   new_level += 1
                   leveled_up = True
-                  print(f"{user}'s {character_name} has leveled up to level {new_level}!")
+                  bot_logger.info(f"{user}'s {character_name} has leveled up to level {new_level}!")
 
                 # Update character's XP and level.
                 await self.db.execute(
@@ -817,12 +857,12 @@ class IdleZPGBot:
           # Commit the transaction.
           await self.db.commit()
           # Debug: Indicate that XP has been awarded.
-          print(f'Awarded {self.xp_per_interval} XP to characters.')
+          bot_logger.info(f'Awarded {self.xp_per_interval} XP to characters.')
       except asyncio.CancelledError:
-        print('XP awarding task cancelled.')
+        bot_logger.warning('XP awarding task cancelled.')
         break
       except Exception as e:
-        print(f'Error in award_experience: {e}')
+        bot_logger.error(f'Error in award_experience: {e}')
         break
 
   async def join_channel(self):
@@ -836,7 +876,7 @@ class IdleZPGBot:
     await self.initialize_database()
     # Send JOIN command to the server.
     self.send_raw(f'JOIN {self.channel}')
-    print(f'Joining channel: {self.channel}')
+    bot_logger.info(f'Joining channel: {self.channel}')
     # Start the background task for awarding experience.
     self.xp_task = asyncio.create_task(self.award_experience())
 
@@ -847,7 +887,7 @@ class IdleZPGBot:
     Args:
         message (str): The raw IRC message to send.
     """
-    print(f'SENT: {message}')
+    bot_logger.info(f'SENT: {message}')
     if self.writer is None:
       raise RuntimeError('Writer is not initialized')
     # Send the message followed by the IRC message terminator '\r\n'.
@@ -861,6 +901,7 @@ class IdleZPGBot:
         message (str): The message to send.
     """
     self.send_raw(f'PRIVMSG {self.channel} :{message}')
+    privmsg_logger.info(f'{self.nickname} in {self.channel}: {message}')
 
   def send_notice(self, target_nick, message):
     """
@@ -891,21 +932,21 @@ class IdleZPGBot:
         raise RuntimeError('Writer is not initialized')
       await self.writer.drain()
     except Exception as e:
-      print(f'Error while sending QUIT: {e}')
+      bot_logger.error(f'Error while sending QUIT: {e}')
     finally:
       # Cancel message processing task if it's running.
       if self.message_task is not None and not self.message_task.done():
-        print('Cancelling message processing task...')
+        bot_logger.info('Cancelling message processing task...')
         self.message_task.cancel()
         try:
           await self.message_task
         except asyncio.CancelledError:
           pass
       if self.writer:
-        print('Closing connection...')
+        bot_logger.info('Closing connection...')
         # Cancel the background XP task if it's running.
         if self.xp_task and not self.xp_task.done():
-          print('Cancelling XP awarding task...')
+          bot_logger.info('Cancelling XP awarding task...')
           self.xp_task.cancel()
           try:
             await self.xp_task
@@ -921,7 +962,7 @@ class IdleZPGBot:
       if self.db:
         # Close the database connection.
         await self.db.close()
-      print('Disconnected from the server.')
+      bot_logger.info('Disconnected from the server.')
 
 
 async def run():
@@ -932,6 +973,10 @@ async def run():
   """
   # Load configuration from 'config.toml' file.
   config = toml.load('config.toml')
+
+  # Set the console log level based on the configuration
+  console_log_level = config['logging'].get('console_log_level', 'INFO').upper()
+  console_handler.setLevel(console_log_level)
 
   # Instantiate the IRC bot with the loaded configuration.
   bot = IdleZPGBot(config)
@@ -950,23 +995,23 @@ async def run():
       await bot.message_task
     except KeyboardInterrupt:
       # Handle user interrupt (Ctrl+C).
-      print('Keyboard interrupt received. Exiting...')
+      bot_logger.warning('Keyboard interrupt received. Exiting...')
       bot.shutdown = True
       break
     except Exception as e:
       if bot.shutdown:
-        print('Bot is shutting down.')
+        bot_logger.info('Bot is shutting down.')
         break
       # Handle any other exceptions by attempting to reconnect.
       reconnect_attempts += 1
-      print(f'Error: {e}')
+      bot_logger.error(f'Error: {e}')
       if reconnect_attempts <= MAX_RECONNECT_ATTEMPTS:
-        print(
+        bot_logger.info(
           f'Attempting to reconnect in {RECONNECT_DELAY} seconds... (Attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS})'
         )
         await asyncio.sleep(RECONNECT_DELAY)
       else:
-        print('Max reconnect attempts reached. Exiting.')
+        bot_logger.error('Max reconnect attempts reached. Exiting.')
         break
     finally:
       # Ensure the bot disconnects cleanly.
@@ -975,7 +1020,7 @@ async def run():
       if not bot.shutdown:
         bot = IdleZPGBot(config)
 
-  print('Program terminated.')
+  bot_logger.info('Program terminated.')
 
 
 def main():
@@ -987,7 +1032,7 @@ def main():
   try:
     asyncio.run(run())
   except KeyboardInterrupt:
-    print('Program terminated.')
+    bot_logger.info('Program terminated.')
 
 
 if __name__ == '__main__':

@@ -80,6 +80,9 @@ precompute_exponent = 1.16          # Exponent for level-up time scaling
 additional_time_per_level = 86400   # Additional time per level after level 60 (in seconds)
 refresh_interval = 60               # Refresh user list every X seconds
 penalty_multiplier = 1.0            # Multiplier for penalty XP (penalty XP = xp_per_interval * penalty_multiplier)
+
+[logging]
+console_log_level = "INFO"          # Log level for console output (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 ```
 
 ### Configuration Sections
@@ -113,7 +116,13 @@ the bot has read and write permissions for this path.
 - **precompute_exponent**: The exponent used for scaling the time required to level up.
 - **additional_time_per_level**: The additional time in seconds required per level after level 60.
 - **refresh_interval**: The interval in seconds at which the user list is refreshed.
-- **penalty_multiplier**: The multiplier applied to the XP penalty for actions such as talking, parting, quitting, and changing nicks.
+- **penalty_multiplier**: The multiplier applied to the XP penalty for actions such as talking, parting, quitting, and
+changing nicks.
+
+#### `[logging]` Section
+
+- **console_log_level**: The log level for console output. Possible values are `DEBUG`, `INFO`, `WARNING`, `ERROR`, and
+`CRITICAL`.
 
 ### Database Details
 
@@ -171,6 +180,22 @@ Users can unregister their character from the bot using the following command:
 ```
 
 This will remove the character associated with the user's nickname from the database.
+
+## Logging
+
+IdleZPGBot uses Python's `logging` module to log various events and messages. The logging configuration is set up to
+log messages to different files and the console.
+
+### Log Files
+
+- **irc.log**: Logs all messages received from the IRC server.
+- **privmsg.log**: Logs all private messages and channel messages sent by the bot.
+- **bot.log**: Logs general bot activities, including connection status, errors, and other significant events.
+
+### Console Logging
+
+The log level for console output can be configured in the `config.toml` file under the `[logging]` section. The default
+log level is `INFO`, but it can be set to any of the following levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
 
 ## Important Notes
 

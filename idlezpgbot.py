@@ -505,6 +505,9 @@ class IdleZPGBot:
     if not name:
       return False, 'Name cannot be empty.'
 
+    if r'\t' in name or r'\n' in name:
+      return False, 'Name cannot contain tabs or newlines.'
+
     # Allowed characters: letters, numbers, dashes, underscores, and optional spaces.
     invalid_chars = []
     for c in name:

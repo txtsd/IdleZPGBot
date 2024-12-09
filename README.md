@@ -200,4 +200,4 @@ Contributions are welcome! Please fork the repository and submit a pull request 
 
 ## License
 
-This project is licensed under the `GPL-3.0-or-later` License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the `GPL-3.0-or-later` license. See the [LICENSE](LICENSE) file for details.

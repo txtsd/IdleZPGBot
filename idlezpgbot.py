@@ -352,7 +352,7 @@ class IdleZPGBot:
         # Handle SSL errors, such as receiving data after close_notify.
         bot_logger.error(f'SSL error in process_messages: {e}')
         # Exit the loop to allow for reconnect or clean shutdown.
-        break
+        raise e
       except ConnectionResetError as e:
         # Connection was lost.
         bot_logger.error(f'ConnectionResetError: {e}')
@@ -1031,6 +1031,8 @@ def main():
   """
   try:
     asyncio.run(run())
+  except ssl.SSLError:
+    pass
   except KeyboardInterrupt:
     bot_logger.info('Program terminated.')
 

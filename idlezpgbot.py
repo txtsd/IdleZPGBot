@@ -232,10 +232,13 @@ class IdleZPGBot:
       except asyncio.TimeoutError:
         print(f'Read timeout. No data received from server in {timeout} seconds.')
         raise ConnectionResetError('Connection lost due to timeout.')
-      except (KeyboardInterrupt, asyncio.CancelledError) as e:
-        # Handle task cancellation gracefully
-        print('Task cancelled during message processing.')
+      except KeyboardInterrupt as e:
+        # Handle keyboard interrupt
+        print('KeyboardInterrupt during message processing.')
         raise e
+      except asyncio.CancelledError:
+        print('Task cancelled during message processing.')
+        return
       except ssl.SSLError as e:
         # Handle SSL errors, such as receiving data after close_notify
         print(f'SSL error in process_messages: {e}')
@@ -245,6 +248,9 @@ class IdleZPGBot:
         print(f'ConnectionResetError: {e}')
         break  # Exit the loop to trigger reconnect
       except Exception as e:
+        if self.shutdown:
+          print(f'Error in process_messages during shutdown: {e}')
+          return
         print(f'Error in process_messages: {e}')
         break  # Exit the loop to trigger reconnect
 
@@ -767,7 +773,7 @@ class IdleZPGBot:
     except Exception as e:
       print(f'Error while sending QUIT: {e}')
     finally:
-      if self.message_task is not None:
+      if self.message_task is not None and not self.message_task.done():
         print('Cancelling message processing task...')
         self.message_task.cancel()
         try:
@@ -777,7 +783,7 @@ class IdleZPGBot:
       if self.writer:
         print('Closing connection...')
         # Cancel the background XP task if it's running
-        if self.xp_task:
+        if self.xp_task and not self.xp_task.done():
           print('Cancelling XP awarding task...')
           self.xp_task.cancel()
           try:
@@ -816,11 +822,15 @@ async def run():
       # Run process_messages as a separate task
       bot.message_task = asyncio.create_task(bot.process_messages())
       await bot.message_task
-    except (KeyboardInterrupt, asyncio.CancelledError):
+    except KeyboardInterrupt:
       # Handle user interrupt (Ctrl+C)
       print('Keyboard interrupt received. Exiting...')
+      bot.shutdown = True
       break
     except Exception as e:
+      if bot.shutdown:
+        print('Bot is shutting down.')
+        break
       # Handle any other exceptions by attempting to reconnect
       reconnect_attempts += 1
       print(f'Error: {e}')
@@ -835,8 +845,9 @@ async def run():
     finally:
       # Ensure the bot disconnects cleanly
       await bot.disconnect()
-      # Re-initialize the bot
-      bot = IdleZPGBot(config)
+      # Re-initialize the bot (if not shutting down)
+      if not bot.shutdown:
+        bot = IdleZPGBot(config)
 
   print('Program terminated.')
 

@@ -1041,6 +1041,8 @@ def main():
     pass
   except KeyboardInterrupt:
     bot_logger.info('Program terminated.')
+  except Exception as e:
+    bot_logger.error(f'Unhandled exception in main: {e}', exc_info=True)
 
 
 if __name__ == '__main__':

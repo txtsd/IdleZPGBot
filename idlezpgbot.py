@@ -957,8 +957,14 @@ class IdleZPGBot:
         # Clear the set of users.
         self.users.clear()
         # Close the writer stream to terminate the connection.
+        # Wrap wait_closed() in a try-except to handle potential timeouts
         self.writer.close()
-        await self.writer.wait_closed()
+        try:
+          await self.writer.wait_closed()
+        except TimeoutError as e:
+          bot_logger.error(f'TimeoutError during SSL shutdown: {e}')
+        except Exception as e:
+          bot_logger.error(f'Error while waiting for writer to close: {e}, exc_info=True')
       if self.db:
         # Close the database connection.
         await self.db.close()

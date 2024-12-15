@@ -213,7 +213,7 @@ class IdleZPGBot:
     - Manages SASL authentication and capability negotiation.
     - Joins the specified channel upon successful authentication.
     - Updates the list of users in the channel.
-    - Handles various IRC events such as JOIN, PART, QUIT, NICK, PRIVMSG.
+    - Handles various IRC events such as JOIN, PART, QUIT, NICK, KICK, PRIVMSG, NOTICE.
     - Applies penalties to users for specific actions (e.g., talking in the channel).
     - Processes registration commands from users.
     """
@@ -306,6 +306,17 @@ class IdleZPGBot:
             bot_logger.info(f'{sender_nick} quit the server.')
             if sender_nick not in self.ignored_users:
               await self.apply_penalty(sender_nick, reason='QUIT')
+          elif command == 'KICK':
+            # Handle KICK command.
+            channel = params[0]
+            kicked_user = params[1]
+            comment = params[2] if len(params) > 2 else ''
+            if channel == self.channel:
+              # User has been kicked from the channel.
+              self.users.discard(kicked_user)
+              bot_logger.info(f'{kicked_user} was kicked from {channel} by {sender_nick}. Reason: {comment}')
+              if kicked_user not in self.ignored_users:
+                await self.apply_penalty(kicked_user, reason='KICK')
           elif command == 'NICK':
             # Handle NICK messages (when a user changes their nickname).
             new_nick = params[0]
@@ -330,7 +341,20 @@ class IdleZPGBot:
               privmsg_logger.info(f'{sender_nick} in channel: {message_text}')
               # Apply penalty for talking in the channel.
               if sender_nick not in self.ignored_users:
-                await self.apply_penalty(sender_nick, reason='TALK')
+                message_length = len(message_text)
+                await self.apply_penalty(sender_nick, reason='PRIVMSG', extra_info={'message_length': message_length})
+          elif command == 'NOTICE':
+            # Handle NOTICE messages.
+            target = params[0]
+            message_text = params[1] if len(params) > 1 else ''
+            if target == self.channel:
+              # A NOTICE message to the channel.
+              privmsg_logger.info(f'{sender_nick} sent NOTICE to channel: {message_text}')
+              # Apply penalty for sending NOTICE to the channel.
+              if sender_nick not in self.ignored_users:
+                message_length = len(message_text)
+                await self.apply_penalty(sender_nick, reason='NOTICE', extra_info={'message_length': message_length})
+          # Handle other IRC numeric replies or commands as needed.
 
         if self.writer is None:
           raise RuntimeError('Writer is not initialized')
@@ -583,20 +607,22 @@ class IdleZPGBot:
       return s[4:].strip()
     return s
 
-  async def apply_penalty(self, nick, reason=''):
+  async def apply_penalty(self, nick, reason='', extra_info=None):
     """
     Apply penalty to the character associated with the given nick.
 
     Args:
         nick (str): Nickname of the user.
-        reason (str): Reason for the penalty (e.g., 'TALK', 'PART', 'QUIT', 'NICK').
+        reason (str): Reason for the penalty (e.g., 'PRIVMSG', 'PART', 'QUIT', 'NICK', 'KICK', 'NOTICE').
+        extra_info (dict): Additional information needed for calculating penalty (e.g., message_length).
 
     This method deducts XP from the character associated with the given
     nickname and handles level-down if necessary. It also announces
-    penalties and level changes in the channel.
+    penalties and level changes in the channel, and informs the user
+    about the time until their next level.
     """
-    # Define penalty amount.
-    penalty_xp = self.xp_per_interval * self.penalty_multiplier
+    if extra_info is None:
+      extra_info = {}
 
     if self.db is None:
       raise RuntimeError('Database connection is not initialized')
@@ -608,6 +634,27 @@ class IdleZPGBot:
       row = await cursor.fetchone()
       if row:
         character_name, class_name, current_xp, current_level = row
+
+        # Calculate penalty_xp based on reason and current_level
+        reason_upper = reason.upper()
+        if reason_upper == 'NICK':
+          penalty_xp = 30 * (1.14**current_level)
+        elif reason_upper == 'PART':
+          penalty_xp = 200 * (1.14**current_level)
+        elif reason_upper == 'QUIT':
+          penalty_xp = 20 * (1.14**current_level)
+        elif reason_upper == 'KICK':
+          penalty_xp = 250 * (1.14**current_level)
+        elif reason_upper == 'PRIVMSG':
+          message_length = extra_info.get('message_length', 0)
+          penalty_xp = message_length * (1.14**current_level)
+        elif reason_upper == 'NOTICE':
+          message_length = extra_info.get('message_length', 0)
+          penalty_xp = message_length * (1.14**current_level)
+        else:
+          # Default penalty
+          penalty_xp = self.xp_per_interval * self.penalty_multiplier
+
         new_xp = max(current_xp - penalty_xp, 0)
         new_level = current_level
         leveled_down = False
@@ -624,28 +671,39 @@ class IdleZPGBot:
         )
         await self.db.commit()
 
+        # Calculate time until next level
+        time_remaining = self.time_until_next_level(new_level, new_xp)
+        time_formatted = self.format_time(time_remaining)
+
+        # Prepare the time until next level message
+        time_message = f'Time until next level: {time_formatted}'
+
         if leveled_down:
           # Announce level-down in the channel.
-          time_remaining = self.time_until_next_level(new_level, new_xp)
-          time_formatted = self.format_time(time_remaining)
-          message = f"{nick}'s character {character_name} has dropped to level {new_level}. Time until next level: {time_formatted}"
-          self.send_channel_message(message)
+          level_down_message = f"{nick}'s character {character_name} has dropped to level {new_level}. {time_message}"
+          self.send_channel_message(level_down_message)
 
         # Map reason to 'reasoning' form for the message.
         reason_ing_map = {
           'PART': 'parting',
           'QUIT': 'quitting',
-          'TALK': 'talking',
+          'PRIVMSG': 'talking',
+          'NOTICE': 'talking',
           'NICK': 'changing nick',
+          'KICK': 'being kicked',
         }
-        reason_text = reason_ing_map.get(reason.upper(), reason.lower() + 'ing')
+        reason_text = reason_ing_map.get(reason_upper, reason.lower() + 'ing')
 
         # Send the public penalty message.
-        public_message = f"{nick}'s character {character_name}, the {class_name}, has been penalized for {reason_text}."
+        public_message = (
+          f"{nick}'s character {character_name}, the {class_name}, has been penalized for {reason_text}. {time_message}"
+        )
         self.send_channel_message(public_message)
 
         # Notify the user about the penalty.
-        penalty_message = f'Your character {character_name}, the {class_name}, has been penalized for {reason_text}.'
+        penalty_message = (
+          f'Your character {character_name}, the {class_name}, has been penalized for {reason_text}. {time_message}'
+        )
         self.send_notice(nick, penalty_message)
 
   @staticmethod

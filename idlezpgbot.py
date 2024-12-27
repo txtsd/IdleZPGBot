@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import random
 import ssl
 import time
 from typing import Optional, Set
@@ -139,6 +140,9 @@ class IdleZPGBot:
     # Multiplier for penalty XP.
     self.penalty_multiplier = self.config['game'].get('penalty_multiplier', 1.0)
 
+    # Define the item types
+    self.item_types = ['ring', 'amulet', 'charm', 'weapon', 'helm', 'armor', 'gloves', 'leggings', 'shield', 'boots']
+
   async def connect(self):
     """
     Establish a secure connection to the IRC server and initiate SASL authentication.
@@ -195,6 +199,17 @@ class IdleZPGBot:
           owner_nick TEXT NOT NULL,
           xp INTEGER NOT NULL DEFAULT 0,
           level INTEGER NOT NULL DEFAULT 0
+      )
+    """)
+
+    # Create the items table for storing character items.
+    await self.db.execute("""
+      CREATE TABLE IF NOT EXISTS items (
+        character_name TEXT NOT NULL,
+        item_type TEXT NOT NULL,
+        item_level INTEGER NOT NULL,
+        PRIMARY KEY (character_name, item_type),
+        FOREIGN KEY (character_name) REFERENCES characters(character_name)
       )
     """)
 
@@ -911,6 +926,8 @@ class IdleZPGBot:
                   # Updated message to include the class name.
                   message = f"{user}'s character {character_name}, the {class_name}, has attained level {new_level}! Time until next level: {time_formatted}"
                   self.send_channel_message(message)
+                  # Handle item finding
+                  await self.find_item(character_name, new_level, user)
 
           # Commit the transaction.
           await self.db.commit()
@@ -922,6 +939,81 @@ class IdleZPGBot:
       except Exception as e:
         bot_logger.error(f'Error in award_experience: {e}')
         break
+
+  async def find_item(self, character_name, new_level, user):
+    """
+    Handle item finding when a character levels up.
+
+    Args:
+        character_name (str): The character's name.
+        new_level (int): The new level of the character.
+        user (str): The user's nickname.
+
+    This method calculates the probabilities of finding items of different levels,
+    picks an item level and type based on these probabilities, and updates the character's
+    items in the database accordingly.
+    """
+    max_item_level = int(new_level * 1.5)
+    levels = []
+    cumulative_weights = []
+    total_weight = 0.0
+    for level in range(1, max_item_level + 1):
+      weight = 1 / (1.4**level)
+      total_weight += weight
+      levels.append(level)
+      cumulative_weights.append(total_weight)
+
+    # Generate a random number between 0 and total_weight
+    rand = random.uniform(0, total_weight)
+
+    # Find the item level based on random number
+    for i, cumulative_weight in enumerate(cumulative_weights):
+      if rand <= cumulative_weight:
+        item_level = levels[i]
+        break
+    else:
+      # In case of rounding errors
+      item_level = levels[-1]
+
+    # Randomly pick an item type
+    item_type = random.choice(self.item_types)
+
+    # Check if character has an item of this type
+    if self.db is None:
+      raise RuntimeError('Database connection is not initialized')
+
+    async with self.db.execute(
+      'SELECT item_level FROM items WHERE character_name = ? AND item_type = ?', (character_name, item_type)
+    ) as cursor:
+      row = await cursor.fetchone()
+
+    if row:
+      # Character already has an item of this type
+      current_item_level = row[0]
+      if item_level > current_item_level:
+        # Replace the item in the database
+        await self.db.execute(
+          'UPDATE items SET item_level = ? WHERE character_name = ? AND item_type = ?',
+          (item_level, character_name, item_type),
+        )
+        await self.db.commit()
+        # Announce the item upgrade
+        message = f"{user}'s character {character_name} found a level {item_level} {item_type} and replaced their old level {current_item_level} {item_type}!"
+        self.send_channel_message(message)
+      else:
+        # Found an item, but it's not better than current one
+        message = f"{user}'s character {character_name} found a level {item_level} {item_type}, but their current {item_type} is better."
+        self.send_channel_message(message)
+    else:
+      # Character does not have an item of this type yet
+      await self.db.execute(
+        'INSERT INTO items (character_name, item_type, item_level) VALUES (?, ?, ?)',
+        (character_name, item_type, item_level),
+      )
+      await self.db.commit()
+      # Announce the new item
+      message = f"{user}'s character {character_name} found a level {item_level} {item_type}!"
+      self.send_channel_message(message)
 
   async def join_channel(self):
     """

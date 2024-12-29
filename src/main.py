@@ -27,7 +27,7 @@ async def run():
     MAX_RECONNECT_ATTEMPTS = config['irc']['max_reconnect_attempts']
     RECONNECT_DELAY = config['irc']['reconnect_delay']
 
-    while reconnect_attempts <= MAX_RECONNECT_ATTEMPTS:
+    while reconnect_attempts <= MAX_RECONNECT_ATTEMPTS and not bot.shutdown:
         try:
             # Connect to the IRC server.
             await bot.connect()

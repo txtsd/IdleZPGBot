@@ -18,6 +18,9 @@ homepage = "https://github.com/txtsd/IdleZPGBot"
 repository = "https://github.com/txtsd/IdleZPGBot"
 issues = "https://github.com/txtsd/IdleZPGBot/issues"
 
+[project.scripts]
+idlezpgbot = "src.main:main"
+
 [tool.ruff]
 line-length = 120
 indent-width = 2

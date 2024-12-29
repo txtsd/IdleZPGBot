@@ -157,15 +157,6 @@ class IdleZPGBot:
 
         This asynchronous method continuously reads messages from the IRC server,
         handles server commands, and responds appropriately.
-
-        Capabilities:
-        - Responds to PING messages to keep the connection alive.
-        - Manages SASL authentication and capability negotiation.
-        - Joins the specified channel upon successful authentication.
-        - Updates the list of users in the channel.
-        - Handles various IRC events such as JOIN, PART, QUIT, NICK, KICK, PRIVMSG, NOTICE.
-        - Applies penalties to users for specific actions (e.g., talking in the channel).
-        - Processes registration commands from users.
         """
         # Extract required credentials and settings from configuration.
         nickname = self.config['irc']['nickname']
@@ -192,125 +183,8 @@ class IdleZPGBot:
                     # Log received line.
                     irc_logger.debug(f'{line}')
 
-                    # Respond to server PING messages to keep the connection alive.
-                    if line.startswith('PING'):
-                        self.send_raw(f'PONG {line[5:]}')
-                        continue
-
-                    # Parse the IRC message line into prefix, command, and params.
-                    prefix, command, params = self.parse_irc_line(line)
-
-                    # Extract the sender's nick from the prefix.
-                    sender_nick = self.extract_nick_from_prefix(prefix)
-
-                    # Handle various IRC commands.
-                    if command == 'CAP' and 'ACK' in params:
-                        if 'sasl' in params:
-                            # Server acknowledges SASL capability, begin authentication.
-                            self.send_raw('AUTHENTICATE PLAIN')
-                    elif command == 'AUTHENTICATE' and params[0] == '+':
-                        # Server prompts for authentication credentials.
-                        # Prepare credentials in the format: \0username\0password.
-                        credentials = f'\0{nickname}\0{password}'.encode('utf-8')
-                        # Encode credentials in Base64 as required by SASL PLAIN mechanism.
-                        auth_message = base64.b64encode(credentials).decode('utf-8')
-                        self.send_raw(f'AUTHENTICATE {auth_message}')
-                    elif command == '903':
-                        # SASL authentication was successful.
-                        bot_logger.info('SASL authentication successful')
-                        # End capability negotiation.
-                        self.send_raw('CAP END')
-                    elif command == '904' or command == '905':
-                        # SASL authentication failed.
-                        bot_logger.error('SASL authentication failed')
-                        return  # Exit the loop and disconnect.
-                    elif command == '376' or command == '422':
-                        # Server has sent the Message of the Day (MOTD), indicating login is complete.
-                        # Proceed to join the specified channel.
-                        await self.join_channel()
-                    elif command == '353':
-                        # Handle NAMES reply to get the list of users upon joining the channel.
-                        names = params[-1].split()
-                        # Clear existing users before updating.
-                        self.users.clear()
-                        for user in names:
-                            # Remove any user modes or prefixes.
-                            user = user.lstrip('@+%&~')
-                            if user not in self.ignored_users:
-                                self.users.add(user)
-                                bot_logger.debug(f'User in channel: {user}')
-                    elif command == 'JOIN':
-                        # Handle JOIN messages (when a user joins the channel).
-                        if sender_nick not in self.ignored_users:
-                            self.users.add(sender_nick)
-                            bot_logger.info(f'{sender_nick} joined the channel.')
-                    elif command == 'PART':
-                        # Handle PART messages (when a user leaves the channel).
-                        self.users.discard(sender_nick)
-                        bot_logger.info(f'{sender_nick} left the channel.')
-                        if sender_nick not in self.ignored_users:
-                            await self.apply_penalty(sender_nick, reason='PART')
-                    elif command == 'QUIT':
-                        # Handle QUIT messages (when a user disconnects from the server).
-                        self.users.discard(sender_nick)
-                        bot_logger.info(f'{sender_nick} quit the server.')
-                        if sender_nick not in self.ignored_users:
-                            await self.apply_penalty(sender_nick, reason='QUIT')
-                    elif command == 'KICK':
-                        # Handle KICK command.
-                        channel = params[0]
-                        kicked_user = params[1]
-                        comment = params[2] if len(params) > 2 else ''
-                        if channel == self.channel:
-                            # User has been kicked from the channel.
-                            self.users.discard(kicked_user)
-                            bot_logger.info(
-                                f'{kicked_user} was kicked from {channel} by {sender_nick}. Reason: {comment}'
-                            )
-                            if kicked_user not in self.ignored_users:
-                                await self.apply_penalty(kicked_user, reason='KICK')
-                    elif command == 'NICK':
-                        # Handle NICK messages (when a user changes their nickname).
-                        new_nick = params[0]
-                        if sender_nick in self.users:
-                            self.users.discard(sender_nick)
-                            self.users.add(new_nick)
-                            bot_logger.info(f'{sender_nick} changed nick to {new_nick}')
-                            if sender_nick not in self.ignored_users:
-                                await self.apply_penalty(sender_nick, reason='NICK')
-                        if sender_nick == nickname:
-                            # Update bot's own nickname if it changed.
-                            self.nickname = new_nick
-                    elif command == 'PRIVMSG':
-                        # Handle PRIVMSG (private messages or channel messages).
-                        target = params[0]
-                        message_text = params[1] if len(params) > 1 else ''
-                        if target == self.nickname:
-                            # Private message to the bot.
-                            await self.handle_private_message(sender_nick, message_text)
-                        elif target == self.channel:
-                            # Message in the channel.
-                            privmsg_logger.info(f'{sender_nick} in channel: {message_text}')
-                            # Apply penalty for talking in the channel.
-                            if sender_nick not in self.ignored_users:
-                                message_length = len(message_text)
-                                await self.apply_penalty(
-                                    sender_nick, reason='PRIVMSG', extra_info={'message_length': message_length}
-                                )
-                    elif command == 'NOTICE':
-                        # Handle NOTICE messages.
-                        target = params[0]
-                        message_text = params[1] if len(params) > 1 else ''
-                        if target == self.channel:
-                            # A NOTICE message to the channel.
-                            privmsg_logger.info(f'{sender_nick} sent NOTICE to channel: {message_text}')
-                            # Apply penalty for sending NOTICE to the channel.
-                            if sender_nick not in self.ignored_users:
-                                message_length = len(message_text)
-                                await self.apply_penalty(
-                                    sender_nick, reason='NOTICE', extra_info={'message_length': message_length}
-                                )
-                    # Handle other IRC numeric replies or commands as needed.
+                    # Handle the IRC line.
+                    await self.handle_irc_line(line, nickname, password)
 
                 if self.writer is None:
                     raise RuntimeError('Writer is not initialized')
@@ -347,6 +221,228 @@ class IdleZPGBot:
                 break
 
         bot_logger.info('Exiting process_messages loop.')
+
+    async def handle_irc_line(self, line, nickname, password):
+        """
+        Handle a single line of IRC message.
+
+        Args:
+            line (str): The raw IRC message line.
+            nickname (str): The bot's nickname.
+            password (str): The bot's password for authentication.
+        """
+        # Respond to server PING messages to keep the connection alive.
+        if line.startswith('PING'):
+            self.send_raw(f'PONG {line[5:]}')
+            return
+
+        # Parse the IRC message line into prefix, command, and params.
+        prefix, command, params = self.parse_irc_line(line)
+
+        # Extract the sender's nick from the prefix.
+        sender_nick = self.extract_nick_from_prefix(prefix)
+
+        # Handle various IRC commands.
+        if command == 'CAP' and 'ACK' in params:
+            await self.handle_cap_ack(params)
+        elif command == 'AUTHENTICATE' and params[0] == '+':
+            await self.handle_authenticate(nickname, password)
+        elif command == '903':
+            await self.handle_auth_success()
+        elif command == '904' or command == '905':
+            await self.handle_auth_failure()
+        elif command == '376' or command == '422':
+            await self.handle_motd_complete()
+        elif command == '353':
+            await self.handle_names_reply(params)
+        elif command == 'JOIN':
+            await self.handle_join(sender_nick)
+        elif command == 'PART':
+            await self.handle_part(sender_nick)
+        elif command == 'QUIT':
+            await self.handle_quit(sender_nick)
+        elif command == 'KICK':
+            await self.handle_kick(params, sender_nick)
+        elif command == 'NICK':
+            await self.handle_nick_change(sender_nick, params)
+        elif command == 'PRIVMSG':
+            await self.handle_privmsg(sender_nick, params)
+        elif command == 'NOTICE':
+            await self.handle_notice(sender_nick, params)
+
+    async def handle_cap_ack(self, params):
+        """
+        Handle CAP ACK command.
+
+        Args:
+            params (list): Parameters of the CAP command.
+        """
+        if 'sasl' in params:
+            # Server acknowledges SASL capability, begin authentication.
+            self.send_raw('AUTHENTICATE PLAIN')
+
+    async def handle_authenticate(self, nickname, password):
+        """
+        Handle AUTHENTICATE command.
+
+        Args:
+            nickname (str): The bot's nickname.
+            password (str): The bot's password for authentication.
+        """
+        # Prepare credentials in the format: \0username\0password.
+        credentials = f'\0{nickname}\0{password}'.encode('utf-8')
+        # Encode credentials in Base64 as required by SASL PLAIN mechanism.
+        auth_message = base64.b64encode(credentials).decode('utf-8')
+        self.send_raw(f'AUTHENTICATE {auth_message}')
+
+    async def handle_auth_success(self):
+        """
+        Handle successful SASL authentication.
+        """
+        bot_logger.info('SASL authentication successful')
+        # End capability negotiation.
+        self.send_raw('CAP END')
+
+    async def handle_auth_failure(self):
+        """
+        Handle failed SASL authentication.
+        """
+        bot_logger.error('SASL authentication failed')
+
+    async def handle_motd_complete(self):
+        """
+        Handle completion of Message of the Day (MOTD).
+        """
+        # Proceed to join the specified channel.
+        await self.join_channel()
+
+    async def handle_names_reply(self, params):
+        """
+        Handle NAMES reply to get the list of users upon joining the channel.
+
+        Args:
+            params (list): Parameters of the NAMES command.
+        """
+        names = params[-1].split()
+        # Clear existing users before updating.
+        self.users.clear()
+        for user in names:
+            # Remove any user modes or prefixes.
+            user = user.lstrip('@+%&~')
+            if user not in self.ignored_users:
+                self.users.add(user)
+                bot_logger.debug(f'User in channel: {user}')
+
+    async def handle_join(self, sender_nick):
+        """
+        Handle JOIN messages (when a user joins the channel).
+
+        Args:
+            sender_nick (str): Nickname of the user who joined.
+        """
+        if sender_nick not in self.ignored_users:
+            self.users.add(sender_nick)
+            bot_logger.info(f'{sender_nick} joined the channel.')
+
+    async def handle_part(self, sender_nick):
+        """
+        Handle PART messages (when a user leaves the channel).
+
+        Args:
+            sender_nick (str): Nickname of the user who left.
+        """
+        self.users.discard(sender_nick)
+        bot_logger.info(f'{sender_nick} left the channel.')
+        if sender_nick not in self.ignored_users:
+            await self.apply_penalty(sender_nick, reason='PART')
+
+    async def handle_quit(self, sender_nick):
+        """
+        Handle QUIT messages (when a user disconnects from the server).
+
+        Args:
+            sender_nick (str): Nickname of the user who quit.
+        """
+        self.users.discard(sender_nick)
+        bot_logger.info(f'{sender_nick} quit the server.')
+        if sender_nick not in self.ignored_users:
+            await self.apply_penalty(sender_nick, reason='QUIT')
+
+    async def handle_kick(self, params, sender_nick):
+        """
+        Handle KICK command.
+
+        Args:
+            params (list): Parameters of the KICK command.
+            sender_nick (str): Nickname of the user who issued the KICK.
+        """
+        channel = params[0]
+        kicked_user = params[1]
+        comment = params[2] if len(params) > 2 else ''
+        if channel == self.channel:
+            # User has been kicked from the channel.
+            self.users.discard(kicked_user)
+            bot_logger.info(f'{kicked_user} was kicked from {channel} by {sender_nick}. Reason: {comment}')
+            if kicked_user not in self.ignored_users:
+                await self.apply_penalty(kicked_user, reason='KICK')
+
+    async def handle_nick_change(self, sender_nick, params):
+        """
+        Handle NICK messages (when a user changes their nickname).
+
+        Args:
+            sender_nick (str): Nickname of the user who changed their nick.
+            params (list): Parameters of the NICK command.
+        """
+        new_nick = params[0]
+        if sender_nick in self.users:
+            self.users.discard(sender_nick)
+            self.users.add(new_nick)
+            bot_logger.info(f'{sender_nick} changed nick to {new_nick}')
+            if sender_nick not in self.ignored_users:
+                await self.apply_penalty(sender_nick, reason='NICK')
+        if sender_nick == self.nickname:
+            # Update bot's own nickname if it changed.
+            self.nickname = new_nick
+
+    async def handle_privmsg(self, sender_nick, params):
+        """
+        Handle PRIVMSG (private messages or channel messages).
+
+        Args:
+            sender_nick (str): Nickname of the sender.
+            params (list): Parameters of the PRIVMSG command.
+        """
+        target = params[0]
+        message_text = params[1] if len(params) > 1 else ''
+        if target == self.nickname:
+            # Private message to the bot.
+            await self.handle_private_message(sender_nick, message_text)
+        elif target == self.channel:
+            # Message in the channel.
+            privmsg_logger.info(f'{sender_nick} in channel: {message_text}')
+            # Apply penalty for talking in the channel.
+            if sender_nick not in self.ignored_users:
+                message_length = len(message_text)
+                await self.apply_penalty(sender_nick, reason='PRIVMSG', extra_info={'message_length': message_length})
+
+    async def handle_notice(self, sender_nick, params):
+        """
+        Handle NOTICE messages.
+
+        Args:
+            sender_nick (str): Nickname of the sender.
+            params (list): Parameters of the NOTICE command.
+        """
+        target = params[0]
+        message_text = params[1] if len(params) > 1 else ''
+        if target == self.channel:
+            # A NOTICE message to the channel.
+            privmsg_logger.info(f'{sender_nick} sent NOTICE to channel: {message_text}')
+            # Apply penalty for sending NOTICE to the channel.
+            if sender_nick not in self.ignored_users:
+                message_length = len(message_text)
+                await self.apply_penalty(sender_nick, reason='NOTICE', extra_info={'message_length': message_length})
 
     async def handle_private_message(self, sender_nick, message_text):
         """

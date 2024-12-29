@@ -141,7 +141,18 @@ class IdleZPGBot:
     self.penalty_multiplier = self.config['game'].get('penalty_multiplier', 1.0)
 
     # Define the item types
-    self.item_types = ['ring', 'amulet', 'charm', 'weapon', 'helm', 'armor', 'gloves', 'leggings', 'shield', 'boots']
+    self.item_types = [
+      'ring',
+      'amulet',
+      'charm',
+      'weapon',
+      'helm',
+      'armor',
+      'set of gloves',
+      'set of leggings',
+      'shield',
+      'set of boots',
+    ]
 
   async def connect(self):
     """

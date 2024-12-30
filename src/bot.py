@@ -963,6 +963,18 @@ class IdleZPGBot:
         if self.db is None:
             raise RuntimeError('Database connection is not initialized')
 
+        # Check the highest level at which an item was awarded
+        async with self.db.execute(
+            'SELECT highest_item_level_awarded FROM characters WHERE character_name = ?', (character_name,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row and new_level <= row[0]:
+                # Character has already been awarded an item at this level or higher
+                message = f"{user}'s character {character_name} did not find a new item because they have already been awarded an item at level {row[0]} or higher."
+                self.send_channel_message(message)
+                return
+
+        # Proceed to check if character has an item of this type
         async with self.db.execute(
             'SELECT item_level FROM items WHERE character_name = ? AND item_type = ?', (character_name, item_type)
         ) as cursor:
@@ -995,6 +1007,13 @@ class IdleZPGBot:
             # Announce the new item
             message = f"{user}'s character {character_name} found a level {item_level} {item_type}!"
             self.send_channel_message(message)
+
+        # Update the highest level at which an item was awarded
+        await self.db.execute(
+            'UPDATE characters SET highest_item_level_awarded = ? WHERE character_name = ?',
+            (new_level, character_name),
+        )
+        await self.db.commit()
 
     async def join_channel(self):
         """

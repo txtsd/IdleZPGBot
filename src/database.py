@@ -22,7 +22,8 @@ async def initialize_database(bot):
             password_hash TEXT NOT NULL,
             owner_nick TEXT NOT NULL,
             xp INTEGER NOT NULL DEFAULT 0,
-            level INTEGER NOT NULL DEFAULT 0
+            level INTEGER NOT NULL DEFAULT 0,
+            highest_item_level_awarded INTEGER NOT NULL DEFAULT 0
         )
         """
     )

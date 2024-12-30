@@ -470,7 +470,7 @@ class IdleZPGBot:
             await self.handle_info_command(sender_nick)
         else:
             # Optionally, handle other private messages or send a help message.
-            pass
+            await self.handle_help_command(sender_nick)
 
     async def handle_register_command(self, sender_nick, args):
         """

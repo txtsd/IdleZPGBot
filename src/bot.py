@@ -462,6 +462,9 @@ class IdleZPGBot:
         elif message_text.strip() == 'unregister':
             # Handle unregistration command.
             await self.handle_unregister_command(sender_nick)
+        elif message_text.strip() == 'help':
+            # Handle help command.
+            await self.handle_help_command(sender_nick)
         else:
             # Optionally, handle other private messages or send a help message.
             pass
@@ -600,6 +603,23 @@ class IdleZPGBot:
             error_message = str(e)
             self.send_notice(sender_nick, error_message)
             bot_logger.error(f'Unregister failed for user {sender_nick}: {str(e)}')
+
+    async def handle_help_command(self, sender_nick):
+        """
+        Handle the 'help' command sent by a user.
+
+        Args:
+            sender_nick (str): Nickname of the sender.
+
+        This method sends a list of available commands to the user.
+        """
+        help_message = (
+            'Available commands:\n'
+            'register <character_name> <class_name> <password> - Register a new character.\n'
+            'unregister - Unregister your character.\n'
+            'help - Show this help message.'
+        )
+        self.send_notice(sender_nick, help_message)
 
     async def apply_penalty(self, nick, reason='', extra_info=None):
         """

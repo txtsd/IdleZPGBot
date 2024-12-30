@@ -186,6 +186,16 @@ Users can unregister their character from the bot using the following command:
 
 This will remove the character associated with the user's nickname from the database.
 
+#### Help Command
+
+Users can request a list of available commands by sending the following command:
+
+```irc
+/msg <bot> help
+```
+
+This will send a private message to the user with a list of commands they can use.
+
 ## Logging
 
 IdleZPGBot uses Python's `logging` module to log various events and messages. The logging configuration is set up to

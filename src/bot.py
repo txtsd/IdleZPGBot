@@ -465,6 +465,9 @@ class IdleZPGBot:
         elif message_text.strip() == 'help':
             # Handle help command.
             await self.handle_help_command(sender_nick)
+        elif message_text.strip() == 'info':
+            # Handle info command.
+            await self.handle_info_command(sender_nick)
         else:
             # Optionally, handle other private messages or send a help message.
             pass
@@ -620,6 +623,27 @@ class IdleZPGBot:
             'help - Show this help message.'
         )
         self.send_notice(sender_nick, help_message)
+
+    async def handle_info_command(self, sender_nick):
+        """
+        Handle the 'info' command sent by a user.
+
+        Args:
+            sender_nick (str): Nickname of the sender.
+
+        This method sends information about the bot and lists online operators.
+        """
+        bot_info = (
+            'IdleZPGBot\n'
+            'Version: 0.0.3\n'
+            'Source: https://github.com/txtsd/IdleZPGBot\n'
+            'Admins online: '
+        )
+        # List online operators excluding ignored users
+        operators_online = [user for user in self.users if user in self.config['irc'].get('operators', []) and user not in self.ignored_users]
+        operators_list = ', '.join(operators_online) if operators_online else 'None'
+        info_message = f"{bot_info}{operators_list}"
+        self.send_notice(sender_nick, info_message)
 
     async def apply_penalty(self, nick, reason='', extra_info=None):
         """

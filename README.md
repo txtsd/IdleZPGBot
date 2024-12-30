@@ -196,6 +196,16 @@ Users can request a list of available commands by sending the following command:
 
 This will send a private message to the user with a list of commands they can use.
 
+#### Info Command
+
+Users can request information about the bot, including which operators are online, by sending the following command:
+
+```irc
+/msg <bot> info
+```
+
+This will send a private message to the user with details about the bot and a list of online operators.
+
 ## Logging
 
 IdleZPGBot uses Python's `logging` module to log various events and messages. The logging configuration is set up to

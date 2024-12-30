@@ -13,14 +13,15 @@ levels, in an SQLite database.
 - **Experience System**: Awards XP to users periodically, tracks levels, and announces level-ups in the channel.
 - **Database Integration**: Stores and manages user data in an SQLite database asynchronously.
 - **Automatic User Management**: Automatically adds new users to the database when they join the channel.
-- **Penalties**: Applies penalties for talking, parting, quitting, and changing nicks.
+- **Penalties**: Applies penalties for talking, parting, quitting, changing nicks, and being kicked.
+- **Item System**: Characters can find and upgrade items as they level up.
 
 ## Usage Notes
 
 - Ensure you have a `config.toml` file in the same directory with the appropriate configuration settings for the bot to
-function correctly.
+  function correctly.
 - The bot expects certain fields in the configuration file, such as server details, nickname, username, real name,
-password, channel to join, and database configuration.
+  password, channel to join, and database configuration.
 - Install the required dependencies before running the bot.
 
 ### Installing Dependencies
@@ -67,6 +68,7 @@ quit_message = "Goodbye!"           # Message sent upon disconnect
 max_reconnect_attempts = 10         # Maximum number of reconnect attempts
 reconnect_delay = 10                # Delay between reconnect attempts (in seconds)
 read_timeout = 300                  # Read timeout in seconds
+ignored_users = ["ExampleUser"]     # Users to ignore for XP awards and penalties
 
 [database]
 path = "idlezpgbot.db"              # Path to the SQLite database file
@@ -98,14 +100,15 @@ console_log_level = "INFO"          # Log level for console output (DEBUG, INFO,
 - **channel**: The IRC channel that the bot will join upon connecting.
 - **quit_message**: A custom message sent to the server when the bot disconnects.
 - **max_reconnect_attempts**: The maximum number of times the bot will attempt to reconnect to the server if the
-connection is lost.
+  connection is lost.
 - **reconnect_delay**: The delay in seconds between reconnect attempts.
 - **read_timeout**: The timeout in seconds for reading data from the server.
+- **ignored_users**: A list of users to ignore for XP awards and penalties.
 
 #### `[database]` Section
 
 - **path**: Specifies the file path for the SQLite database where user data (XP and levels) will be stored. Ensure that
-the bot has read and write permissions for this path.
+  the bot has read and write permissions for this path.
 
 #### `[game]` Section
 
@@ -116,13 +119,13 @@ the bot has read and write permissions for this path.
 - **precompute_exponent**: The exponent used for scaling the time required to level up.
 - **additional_time_per_level**: The additional time in seconds required per level after level 60.
 - **refresh_interval**: The interval in seconds at which the user list is refreshed.
-- **penalty_multiplier**: The multiplier applied to the XP penalty for actions such as talking, parting, quitting, and
-changing nicks.
+- **penalty_multiplier**: The multiplier applied to the XP penalty for actions such as talking, parting, quitting,
+  changing nicks, and being kicked.
 
 #### `[logging]` Section
 
 - **console_log_level**: The log level for console output. Possible values are `DEBUG`, `INFO`, `WARNING`, `ERROR`, and
-`CRITICAL`.
+  `CRITICAL`.
 
 ### Database Details
 
@@ -139,17 +142,19 @@ Upon initialization, the bot will create a `characters` table if it doesn't alre
 - **owner_nick** (`TEXT`, `NOT NULL`): The IRC nickname of the user who owns the character.
 - **xp** (`INTEGER`, `NOT NULL`, `DEFAULT 0`): The accumulated experience points of the character.
 - **level** (`INTEGER`, `NOT NULL`, `DEFAULT 0`): The current level of the character based on their XP.
+- **highest_item_level_awarded** (`INTEGER`, `NOT NULL`, `DEFAULT 0`): The highest level at which an item was awarded.
 
 #### User Management
 
 - **Adding Users**: Users must register a character with the bot to participate. The bot checks if they exist in the
-database and adds them if not.
+  database and adds them if not.
 - **Awarding XP**: The bot periodically awards XP to all users currently in the channel. It also checks if users have
-leveled up and announces it in the channel.
+  leveled up and announces it in the channel.
 - **Level Up Announcements**: When a user reaches a new level, the bot announces the achievement and informs them of
-the time remaining until the next level.
-- **Penalties**: The bot applies penalties for talking, parting, quitting, and changing nicks, which can result in XP
-loss and level-downs.
+  the time remaining until the next level.
+- **Penalties**: The bot applies penalties for talking, parting, quitting, changing nicks, and being kicked, which can
+  result in XP loss and level-downs.
+- **Item System**: Characters can find and upgrade items as they level up.
 
 ### Commands
 
@@ -200,24 +205,24 @@ log level is `INFO`, but it can be set to any of the following levels: `DEBUG`, 
 ## Important Notes
 
 - **Security**: The bot uses SASL PLAIN authentication over an SSL/TLS connection for secure communication. Ensure that
-your `nickserv_password` is kept confidential.
+  your `nickserv_password` is kept confidential.
 - **Server Compatibility**: Ensure that the IRC server you are connecting to supports SASL authentication and that your
-credentials are correct.
+  credentials are correct.
 - **Database Persistence**: The SQLite database ensures that user data persists even if the bot restarts. Regular
-backups are recommended to prevent data loss.
+  backups are recommended to prevent data loss.
 - **Bot Permissions**: The bot must have the necessary permissions to join the specified channel and send messages.
-Ensure that the bot’s nickname is registered and has the appropriate access rights on the IRC server.
+  Ensure that the bot’s nickname is registered and has the appropriate access rights on the IRC server.
 
 ## Troubleshooting
 
 - **Connection Issues**: Verify that the IRC server address and port are correct and that there are no network issues
-preventing the bot from connecting.
+  preventing the bot from connecting.
 - **Authentication Failures**: Ensure that the `nickserv_password` is correct and that the IRC server supports SASL
-PLAIN authentication.
+  PLAIN authentication.
 - **Database Errors**: Check that the specified database path is correct and that the bot has the necessary permissions
-to read/write to the file.
+  to read/write to the file.
 - **Unexpected Behavior**: Review the console logs printed by the bot for any error messages or warnings that can help
-identify the issue.
+  identify the issue.
 
 ## Contributing
 

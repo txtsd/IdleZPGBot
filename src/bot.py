@@ -327,11 +327,18 @@ class IdleZPGBot:
         # Clear existing users before updating.
         self.users.clear()
         for user in names:
-            # Remove any user modes or prefixes.
-            user = user.lstrip('@+%&~')
-            if user not in self.ignored_users:
-                self.users.add(user)
-                bot_logger.debug(f'User in channel: {user}')
+            # Check if the user is an operator (prefixed with '@').
+            if user.startswith('@'):
+                user = user[1:]  # Remove the '@' prefix.
+                if user not in self.ignored_users:
+                    self.users.add(user)
+                    bot_logger.debug(f'Operator in channel: {user}')
+            else:
+                # Remove any other user modes or prefixes.
+                user = user.lstrip('+%&~')
+                if user not in self.ignored_users:
+                    self.users.add(user)
+                    bot_logger.debug(f'User in channel: {user}')
 
     async def handle_join(self, sender_nick):
         """
@@ -640,7 +647,7 @@ class IdleZPGBot:
             'Admins online: '
         )
         # List online operators excluding ignored users
-        operators_online = [user for user in self.users if user in self.config['irc'].get('operators', []) and user not in self.ignored_users]
+        operators_online = [user for user in self.users if user.startswith('@') and user not in self.ignored_users]
         operators_list = ', '.join(operators_online) if operators_online else 'None'
         info_message = f"{bot_info}{operators_list}"
         self.send_notice(sender_nick, info_message)

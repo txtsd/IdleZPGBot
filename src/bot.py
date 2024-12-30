@@ -635,7 +635,7 @@ class IdleZPGBot:
         """
         bot_info = (
             'IdleZPGBot\n'
-            'Version: 0.0.3\n'
+            'Version: 0.1.0\n'
             'Source: https://github.com/txtsd/IdleZPGBot\n'
             'Admins online: '
         )

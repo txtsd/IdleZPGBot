@@ -1,11 +1,23 @@
 [project]
 name = "idlezpgbot"
-version = "0.0.3"
+version = "0.1.0"
 description = "The #IdleZPG Bot"
 readme = "README.md"
 license = { file = "LICENSE" }
+authors = [{ name = "txtsd", email = "code@ihavea.quest" }]
 maintainers = [{ name = "txtsd", email = "code@ihavea.quest" }]
-keywords = ["irc", "bot", "idlerpg", "zpg"]
+keywords = ["irc", "bot", "idlerpg", "idle", "rpg", "zpg"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Operating System :: OS Independent",
+  "Topic :: Communications :: Chat :: Internet Relay Chat",
+  "Topic :: Games/Entertainment :: Role-Playing",
+  "Topic :: Utilities"
+]
 requires-python = ">=3.12"
 dependencies = [
  "aiosqlite>=0.20.0",
